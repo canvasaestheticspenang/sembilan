@@ -119,7 +119,7 @@ function valTrip(km, toll) {
   const pts = []; for (let i = 0; i <= 60; i++) pts.push([5.3 + i * 0.001, 100.4]);
   return { status: 0, summary: { length: km, time: km * 90, has_toll: toll, has_highway: toll },
     legs: [{ shape: enc6(pts), maneuvers: [
-      { type: 1, begin_shape_index: 0, street_names: [toll ? 'Lebuhraya Tol' : 'Jalan Biasa'], length: km },
+      { type: 1, begin_shape_index: 0, end_shape_index: 60, street_names: [toll ? 'E1/Lebuhraya Utara–Selatan' : 'Jalan Biasa'], length: km, toll },
       { type: 4, begin_shape_index: 60, length: 0 } ] }] };
 }
 const notFound = () => ({ ok: false, status: 404, json: async () => { throw new SyntaxError('not found'); } });
@@ -217,6 +217,9 @@ async function bootApp(opts = {}) {
     }
     if (url.includes('photon.komoot.io')) {
       return ok({ features: [{ geometry: { coordinates: [100.44, 5.36] }, properties: { name: 'Gurney Plaza', city: 'George Town' } }] });
+    }
+    if (url.includes('data/tolls.json')) {
+      return ok(JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'tolls.json'), 'utf8')));
     }
     if (url.includes('data/index.json')) {
       return cfg.withDB ? ok({ updated: DEFAULT_DB.updated, tiles: { '5_100': 5 } }) : notFound();

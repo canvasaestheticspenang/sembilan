@@ -260,3 +260,18 @@ describe('Valhalla routing', () => {
     });
   });
 });
+
+describe('toll price estimate', () => {
+  it('estimates a car toll on the North-South Expressway and says motorcycles are free', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false, withDB: true, valhalla: true }, async (ctx) => {
+      await ctx.search('gurney');
+      await ctx.waitFor(() => /≈ RM0\.75/.test(text(ctx, '#sheet')), { what: 'toll estimate (6.7 km x 0.1124)' });
+      assert.match(sheetText(ctx), /anggaran|estimates/i, 'estimate disclaimer is shown');
+    });
+    await withApp({ rider: true, withDB: true, valhalla: true }, async (ctx) => {
+      await ctx.search('gurney');
+      assert.match(sheetText(ctx), /percuma untuk motosikal|free for motorcycles/);
+      assert.doesNotMatch(sheetText(ctx), /≈ RM/, 'no car price in rider mode');
+    });
+  });
+});

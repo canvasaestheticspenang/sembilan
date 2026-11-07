@@ -58,7 +58,7 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(networkFirst(req, SHELL_CACHE, INDEX_URL));
       return;
     }
-    if (/\/data\/(index\.json|t\/[\d_-]+\.json)$/.test(url.pathname)) {
+    if (/\/data\/(index\.json|tolls\.json|t\/[\d_-]+\.json)$/.test(url.pathname)) {
       event.respondWith(networkFirst(req, DATA_CACHE));
       return;
     }
