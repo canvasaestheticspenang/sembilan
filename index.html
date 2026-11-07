@@ -381,13 +381,20 @@ const qO=$('#qOrigin'),qD=$('#qDest'),sugg=$('#sugg');
 let sTimer,sCtl;
 function dedupePlaces(list){const out=[];for(const p of list){const k=(p.name||'').trim().toLowerCase();
     if(out.some(o=>{if((o.name||'').trim().toLowerCase()!==k)return false;const d=hav(o.lat,o.lon,p.lat,p.lon);return d<500||((o.sub||'')===(p.sub||'')&&d<3000)}))continue;out.push(p)}return out}
-async function ttSearch(q,signal){if(!S.tomtom)return[];const c=map.getCenter();
-  const j=await getJSON(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(S.tomtom)}&limit=10&countrySet=MY,SG,BN&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&language=en-GB&typeahead=true`,{signal},8000);
+async function ttOne(q,signal,extra){const c=map.getCenter();
+  const j=await getJSON(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(S.tomtom)}&limit=20&countrySet=MY,SG,BN&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&language=en-GB&typeahead=true${extra}`,{signal},8000);
   return (j.results||[]).filter(r=>r.position).map(r=>{const a=r.address||{};return{lat:r.position.lat,lon:r.position.lon,name:(r.poi&&r.poi.name)||a.freeformAddress||q,sub:[r.poi?a.streetName:'',a.municipality,a.countrySubdivision].filter(Boolean).join(', ')}})}
+async function ttSearch(q,signal){if(!S.tomtom)return[];
+  const r=await Promise.allSettled([ttOne(q,signal,'&idxSet=POI'),ttOne(q,signal,'')]);return r.flatMap(x=>x.status==='fulfilled'?x.value:[])}
 async function geocode(q,signal){const [a,b]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal)]);
   if(signal&&signal.aborted)throw new DOMException('Aborted','AbortError');
   if(a.status==='rejected'&&b.status==='rejected')throw a.reason;
-  return dedupePlaces([...(b.status==='fulfilled'?b.value:[]),...(a.status==='fulfilled'?a.value:[])]).slice(0,12)}
+  const c=map.getCenter();
+  const l=dedupePlaces([...(b.status==='fulfilled'?b.value:[]),...(a.status==='fulfilled'?a.value:[])]);
+  l.forEach(p=>p.dk=hav(c.lat,c.lng,p.lat,p.lon));
+  const cnt={};l.forEach(p=>{const k=(p.name||'').toLowerCase();cnt[k]=(cnt[k]||0)+1});
+  if(Object.values(cnt).some(n=>n>=3))l.sort((x,y)=>x.dk-y.dk);
+  return l.slice(0,20).map(p=>({...p,sub:(p.dk<1000?Math.round(p.dk)+' m':(p.dk/1000).toFixed(p.dk<10000?1:0)+' km')+(p.sub?' · '+p.sub:'')}))}
 async function geocodeRaw(q,signal){const c=map.getCenter();
   try{const j=await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&bbox=99.5,0.8,119.5,7.5`,{signal},10000);
     return j.features.map(f=>{const p=f.properties;return{lat:f.geometry.coordinates[1],lon:f.geometry.coordinates[0],name:p.name||[p.street,p.housenumber].filter(Boolean).join(' ')||q,sub:[p.name&&p.street?p.street:'',p.city||p.district||p.county,p.state].filter(Boolean).join(', ')}})}
