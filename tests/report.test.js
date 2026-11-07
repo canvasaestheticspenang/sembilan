@@ -74,7 +74,8 @@ describe('trip log and problem report', () => {
       ctx.window.eval("setTimeout(() => { throw new Error('boom test'); }, 0)");
       await waitFor(() => ctx.app.LOG.some((e) => e.k === 'err' && e.m === 'boom test'), { what: 'the page error in the log' });
       const entry = ctx.app.LOG.find((e) => e.k === 'err');
-      assert.deepEqual(Object.keys(entry).sort(), ['k', 'm', 't'], 'only the message is stored, no stack');
+      assert.ok(Object.keys(entry).every((k) => ['k', 'm', 't', 'at'].includes(k)), 'only the message and file:line are stored, no stack');
+      if (entry.at) assert.match(entry.at, /^[^\s]*:\d+:\d+$/, 'at is file:line:col');
       assert.match(ctx.app.buildReport('', ''), /err m=boom test/, 'the error appears in the report');
     });
   });

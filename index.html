@@ -265,8 +265,8 @@ function logSave(){logT=null;logLast=Date.now();store.set('triplog',LOG)}
 function logFlush(){if(logT)clearTimeout(logT);logSave()}
 function logEv(k,o={}){try{LOG.push({t:Date.now(),k,...o});if(LOG.length>300)LOG.splice(0,LOG.length-300);if(!logT)logT=setTimeout(logSave,Math.max(0,10000-(Date.now()-logLast)))}catch(e){}}
 function logFix(c){try{if(Date.now()-lastFix<15000)return;lastFix=Date.now();logEv('gps',{la:c.latitude.toFixed(4),lo:c.longitude.toFixed(4),acc:Math.round(c.accuracy||0)+' m',v:(c.speed!=null&&c.speed>=0?Math.round(c.speed*3.6):'-')+' km/h'})}catch(e){}}
-window.addEventListener('error',e=>logEv('err',{m:errMsg(e.error||e.message)}));
-window.addEventListener('unhandledrejection',e=>logEv('err',{m:errMsg(e.reason)}));
+window.addEventListener('error',e=>{const x=relErrInfo(e);x&&logEv('err',x)});
+window.addEventListener('unhandledrejection',e=>{const x=relErrInfo(e);x&&logEv('err',x)});
 window.addEventListener('pagehide',logFlush);
 const fmtLog=e=>`${new Date(e.t).toTimeString().slice(0,8)} ${e.k}`+Object.keys(e).filter(x=>x!=='t'&&x!=='k').map(x=>` ${x}=${String(e[x]).replace(/\s+/g,' ')}`).join('').slice(0,200);
 function buildReport(cat,txt){const ms=S.lang==='ms',now=new Date(),h=st.here,r=st.nav?st.nav.r:st.routes[st.sel];
@@ -277,7 +277,7 @@ function buildReport(cat,txt){const ms=S.lang==='ms',now=new Date(),h=st.here,r=
     `Route: ${r?`${(r.distance/1000).toFixed(1)} km, ${Math.round(r.duration/60)} min${r.via?', '+String(r.via).slice(0,120):''}`:'-'}`,
     `Position: ${h?`${la},${lo} (±${Math.round(h.acc||0)} m)`:'-'}`,
     h?`Map: https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}#map=17/${la}/${lo}`:'Map: -','Log (last 25):'];
-  const lines=LOG.slice(-25).map(fmtLog);if(!lines.length)lines.push('-');
+  const lines=relReportLines();if(!lines.length)lines.push('-');
   let out=[...head,...lines].join('\n');while(out.length>3500&&lines.length){lines.shift();out=[...head,...lines].join('\n')}
   return out}
 function waUrl(text,to=REPORT_TO){return `https://wa.me/${String(to||'').replace(/\D/g,'')}?text=${encodeURIComponent(text)}`}
@@ -919,10 +919,10 @@ function prep(r){const coords=[],steps=r.legs[0].steps;const idx=[];
 /* ---------- live-traffic travel times (TomTom, optional key) ----------
    Follows the same road the app will navigate (supporting points), so the time matches the drawn route. */
 let ttWarned=false;
-async function tomtomEta(coords,o,d){if(!S.tomtom||coords.length<2)return null;
+async function tomtomEta(coords,o,d){if(!S.tomtom||coords.length<2||!relOnline())return null;
   const n=Math.min(100,coords.length),pts=[];for(let k=0;k<n;k++){const c=coords[Math.round(k*(coords.length-1)/(n-1))];pts.push({latitude:+c[0].toFixed(5),longitude:+c[1].toFixed(5)})}
   const url=`https://api.tomtom.com/routing/1/calculateRoute/${(+o.lat).toFixed(5)},${(+o.lon).toFixed(5)}:${(+d.lat).toFixed(5)},${(+d.lon).toFixed(5)}/json?key=${encodeURIComponent(S.tomtom)}&traffic=true&travelMode=car&computeTravelTimeFor=all&routeRepresentation=summaryOnly`;
-  try{const j=await getJSON(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({supportingPoints:pts})},15000);
+  try{const j=await getJSON(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({supportingPoints:pts})},st.nav?6000:15000);
     const sm=j.routes&&j.routes[0]&&j.routes[0].summary;if(!sm||!(sm.travelTimeInSeconds>0))return null;
     return{t:sm.travelTimeInSeconds,delay:sm.trafficDelayInSeconds||0,free:sm.noTrafficTravelTimeInSeconds||sm.travelTimeInSeconds}}
   catch(e){logEv('ttFail',{m:errMsg(e)});if(/HTTP 40[13]/.test(errMsg(e))&&!ttWarned){ttWarned=true;toast(T('ttBad'))}return null}}
@@ -1063,10 +1063,10 @@ const lvl=v=>v>=7.5?3:v>=2.5?2:v>=0.5?1:0; // mm/h
 function pointAt(r,a){const c=r.coords,cum=r.cum;let lo=0,hi=cum.length-1;while(hi-lo>1){const m=(lo+hi)>>1;if(cum[m]<=a)lo=m;else hi=m}
   const seg=(cum[hi]-cum[lo])||1,t=Math.max(0,Math.min(1,(a-cum[lo])/seg));return{lat:c[lo][0]+(c[hi][0]-c[lo][0])*t,lon:c[lo][1]+(c[hi][1]-c[lo][1])*t,along:a}}
 function roadAt(r,a){let n='';for(const s of r.steps){if(s.along<=a+1){if(s.name||s.ref)n=s.name||s.ref}else break}return n}
-async function loadRain(r){if(!r||r.rain==='loading')return;const prev=r.rain;r.rain='loading';if(!st.nav)renderSheet();
+async function loadRain(r){if(!r||r.rain==='loading'||(st.nav&&!relOnline()))return;const prev=r.rain;r.rain='loading';if(!st.nav)renderSheet();
   const n=Math.min(12,Math.max(3,Math.ceil(r.total/6000)+1));const pts=[];for(let k=0;k<n;k++)pts.push(pointAt(r,r.total*k/(n-1)));
   const url=`https://api.open-meteo.com/v1/forecast?latitude=${pts.map(p=>p.lat.toFixed(3)).join(',')}&longitude=${pts.map(p=>p.lon.toFixed(3)).join(',')}&minutely_15=precipitation&forecast_minutely_15=48&timeformat=unixtime&timezone=GMT`;
-  try{let j=await getJSON(url,{},15000);if(!Array.isArray(j))j=[j];
+  try{let j=await getJSON(url,{},st.nav?8000:15000);if(!Array.isArray(j))j=[j];
     r.rain={t0:Date.now(),pts:pts.map((p,k)=>({...p,place:roadAt(r,p.along),times:j[k].minutely_15.time,mm:j[k].minutely_15.precipitation}))}}
   catch(e){r.rain=(prev&&prev.pts)?{...prev,t0:Date.now()}:'fail'}
   if(!st.nav&&st.routes[st.sel]===r)renderSheet()}
@@ -1202,10 +1202,10 @@ async function startNav(){startWatch();
   document.body.classList.add('navigating');st.follow=true;applyView();keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
   st.follow=true;if(st.here)followTo(st.here.lat,st.here.lon,17,false);
   const first=r.steps.slice(1).find(x=>!trivial(x))||r.steps[0];say((S.lang==='ms'?'Memulakan navigasi. ':'Starting navigation. ')+instr(r.steps[0])+'. '+(first!==r.steps[0]?(S.lang==='ms'?'Kemudian, ':'Then, ')+instr(first):''));
-  navTick();positionFabs();tipCard()}
+  relSaveRoute();navTick();positionFabs();tipCard()}
 function tipCard(){const tk='tipsSeen'+(S.rider?'Moto':'Car');if(store.get(tk,false))return;store.set(tk,true);const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   modal(`<h3>${T('tipT')}</h3><ul style="margin:0 0 12px;padding-left:20px;line-height:1.5"><li>${T('tipScreen')}</li>${ios?`<li>${T('tipIos')}</li>`:''}${S.rider?`<li>${T('tipRider')}</li>`:''}</ul><div style="text-align:right"><button class="btn p" data-close>${T('tipOk')}</button></div>`)}
-function endNav(){if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
+function endNav(){relClear();relShow('');if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
   if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}}
 $('#btnEnd').onclick=endNav;
 $('#hdTap').onclick=()=>{st.follow=false;applyView()};
@@ -1223,16 +1223,16 @@ $('#btnMute').onclick=()=>{S.voice=!S.voice;save('voice');$('#btnMute').innerHTM
 $('#btnShare').onclick=async()=>{const n=st.nav;if(!n)return;const txt=T('shareTxt')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000)))+` https://www.openstreetmap.org/?mlat=${st.dest.lat.toFixed(5)}&mlon=${st.dest.lon.toFixed(5)}#map=16/${st.dest.lat.toFixed(5)}/${st.dest.lon.toFixed(5)}`;
   try{if(navigator.share){await navigator.share({text:txt});return}}catch(e){if(e.name==='AbortError')return}
   try{await navigator.clipboard.writeText(txt);toast(T('copied'))}catch(e){toast(txt)}};
-async function reroute(){const n=st.nav;if(!n||!st.here)return;n.lastRe=Date.now();logEv('reroute',{});say(T('reroute'));
-  try{const [r]=await fetchRoutes({lat:st.here.lat,lon:st.here.lon},st.dest,false);if(!st.nav)return;
+async function reroute(){const n=st.nav;if(!n||!st.here||n.reBusy)return;n.reBusy=true;n.lastRe=Date.now();logEv('reroute',{n:n.reFail||0});if(!n.reFail)say(T('reroute'));
+  try{const [r]=await fetchRoutes({lat:st.here.lat,lon:st.here.lon},st.dest,false);if(st.nav!==n||!n.off)return; // nav ended, or the rider is back on the old route
     const old=n.r;n.r=r;n.last=0;n.off=0;n.spoken={};n.snap=null;n.line.setLatLngs(r.coords);routeLayer.eachLayer(l=>{if(l!==n.line&&l!==n.done)l.setLatLngs(r.coords)});if(n.done)n.done.setLatLngs([]);
     // reuse POIs from previous route where they still lie on the new one
     if(Array.isArray(old.pois)){r.pois=old.pois.map(p=>{const q=nearestOnRoute(r,p.lat,p.lon);return q.d<({fuel:250,rr:550,cam:45,toll:70,shelter:80})[p.type]?{...p,along:q.along}:null}).filter(Boolean)}
-    st.routes=[r];st.sel=0;if(S.rider)loadRain(r);navTick()}catch(e){logEv('routeFail',{m:errMsg(e)})}}
-function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
+    st.routes=[r];st.sel=0;n.reFail=0;n.reOff=0;relShow('');relSaveRoute();if(S.rider)loadRain(r);navTick()}catch(e){logEv('routeFail',{m:errMsg(e)});relRerouteFail(n)}finally{n.reBusy=false}}
+function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProgress(n);
   let near=nearestOnRoute(r,h.lat,h.lon,n.last-5,n.last+600);if(near.d>150)near=nearestOnRoute(r,h.lat,h.lon);
   const tol=Math.max(45,Math.min(h.acc*1.3,120));
-  if(near.d>tol){if(!n.off)logEv('off',{d:Math.round(near.d)+' m'});n.off++;if(n.off>=3&&Date.now()-n.lastRe>12000){reroute();return}}else{n.off=0;n.last=near.i;const c0=r.coords[near.i],c1=r.coords[Math.min(near.i+1,r.coords.length-1)];n.snap=[c0[0]+near.t*(c1[0]-c0[0]),c0[1]+near.t*(c1[1]-c0[1])];if(n.done)n.done.setLatLngs(r.coords.slice(0,near.i+1).concat([n.snap]))}
+  if(near.d>tol){if(relOffRoute(n,h,near)){reroute();return}}else{n.off=0;relOnRoute(n);n.last=near.i;const c0=r.coords[near.i],c1=r.coords[Math.min(near.i+1,r.coords.length-1)];n.snap=[c0[0]+near.t*(c1[0]-c0[0]),c0[1]+near.t*(c1[1]-c0[1])];if(n.done)n.done.setLatLngs(r.coords.slice(0,near.i+1).concat([n.snap]))}
   const along=near.along;const c=r.coords,i=Math.min(near.i,c.length-2);n.bear=bearing(c[i][0],c[i][1],c[i+1][0],c[i+1][1]);
   const k=r.steps.findIndex(s=>s.along>along+5&&s.maneuver.type!=='depart'&&!trivial(s));const si=k<0?r.steps.length-1:k;const s=r.steps[si];
   const dist=Math.max(0,s.along-along);const remD=Math.max(0,r.total-along);
@@ -1371,6 +1371,82 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
 function applyLang(){document.documentElement.lang=S.lang;qO.placeholder=T('myLoc');qD.placeholder=T('where');$('#speed span').textContent=S.lang==='ms'?'km/j':'km/h';$('#btnEnd').textContent=T('end');
   if(st.origin&&st.origin.gps)st.origin.name=T('myLoc');renderSheet()}
 window.addEventListener('resize',positionFabs);
+
+/* ===== RELIABILITY ===== (offline resume, reroute guard, error capture; hooks: startNav, endNav, reroute, navTick, buildReport) */
+const REL={MAX_AGE:3*3600e3,NEAR_M:1500,SAVE_MS:5000,RE_MIN:8000,MAX_ACC:60,OFF_N:3,BACKOFF:[8000,16000,30000,60000,120000]};
+Object.assign(I.ms,{resumeT:'Sambung perjalanan?',resumeQ:d=>`Perjalanan ke ${d} belum selesai. Sambung navigasi?`,resumeYes:'Sambung',resumeNo:'Buang',
+  relOffline:'Tiada internet: tidak dapat kira semula laluan. Teruskan ke arah laluan.',relOfflineV:'Tiada sambungan. Tidak dapat mengira semula laluan. Sila kembali ke laluan.',
+  relRetry:'Tidak dapat kira semula laluan. Mencuba lagi sebentar lagi.',relRetryV:'Laluan baharu belum dapat dikira. Sila kembali ke laluan.'});
+Object.assign(I.en,{resumeT:'Resume trip?',resumeQ:d=>`Your trip to ${d} wasn't finished. Resume navigation?`,resumeYes:'Resume',resumeNo:'Discard',
+  relOffline:"Offline: can't reroute. Keep heading back to the route.",relOfflineV:'No connection. Cannot reroute. Please head back to the route.',
+  relRetry:"Can't reroute right now. Retrying shortly.",relRetryV:'The new route could not be calculated yet. Please head back to the route.'});
+const relOnline=()=>navigator.onLine!==false;
+/* -- trip persistence: 'trip' = static route (written on start/reroute), 'tripP' = small progress record (throttled) -- */
+function relPack(n,dest,now=Date.now()){const r=n.r;
+  return{v:1,t:now,rider:!!S.rider,dest:{name:dest.name,lat:dest.lat,lon:dest.lon},
+    r:{c:r.coords.map(p=>[+p[0].toFixed(5),+p[1].toFixed(5)]),distance:r.distance,duration:r.duration,via:r.via||'',toll:r.toll,tseg:r.tseg,tollEst:r.tollEst,
+      steps:r.steps.map(({geometry,...s})=>s),pois:Array.isArray(r.pois)?r.pois.slice(0,400):null}}}
+function relUnpack(sv){const q=sv.r,coords=q.c.map(p=>[p[0],p[1]]),cum=[0];
+  for(let i=1;i<coords.length;i++)cum[i]=cum[i-1]+hav(coords[i-1][0],coords[i-1][1],coords[i][0],coords[i][1]);
+  return{coords,cum,total:cum[cum.length-1]||q.distance,distance:q.distance,duration:q.duration,via:q.via,toll:q.toll,tseg:q.tseg,tollEst:q.tollEst,steps:q.steps.map(s=>({...s})),pois:q.pois||null}}
+function relValid(sv){return !!(sv&&sv.v===1&&sv.dest&&isFinite(sv.dest.lat)&&isFinite(sv.dest.lon)&&sv.r&&Array.isArray(sv.r.c)&&sv.r.c.length>=2&&Array.isArray(sv.r.steps)&&sv.r.steps.length)}
+function relAge(sv,prog,now=Date.now()){return now-Math.max(sv.t||0,(prog&&prog.t)||0)}
+function relFresh(sv,prog,now=Date.now()){if(!relValid(sv))return false;const a=relAge(sv,prog,now);return a>=-60000&&a<REL.MAX_AGE}
+function relSaveRoute(){const n=st.nav;if(!n||!st.dest)return;try{store.set('trip',relPack(n,st.dest));store.set('tripP',{t:Date.now(),last:n.last||0})}catch(e){}}
+function relProgress(n){const now=Date.now();if(now-(n.relT||0)<REL.SAVE_MS)return;n.relT=now;store.set('tripP',{t:now,last:n.last||0})}
+function relClear(){try{localStorage.removeItem('s9_trip');localStorage.removeItem('s9_tripP')}catch(e){}}
+function relLoad(){const sv=store.get('trip',null),prog=store.get('tripP',null);return relFresh(sv,prog)?{sv,prog}:null}
+function relPrompt(t){const sv=t.sv,r=relUnpack(sv),h=st.here;if(!h||st.nav)return false;
+  const near=nearestOnRoute(r,h.lat,h.lon);if(near.d>REL.NEAR_M)return false;
+  const left=Math.max(0,r.total-near.along);
+  modal(`<h3>${T('resumeT')}</h3><p>${esc(T('resumeQ')(sv.dest.name||''))}</p><p class="muted">${fmtDist(left)}</p><div class="row" style="margin-top:12px"><button class="btn s" id="rsNo">${T('resumeNo')}</button><button class="btn p" id="rsYes">${T('resumeYes')}</button></div>`);
+  $('#rsNo').onclick=()=>{relClear();$('#modal').classList.add('hidden')};
+  $('#rsYes').onclick=()=>{$('#modal').classList.add('hidden');relResume(t)};return true}
+async function relResume(t){const sv=t.sv;if(st.nav)return;const r=relUnpack(sv);
+  setDest({...sv.dest});st.routes=[r];st.sel=0;st.origin=st.here?{lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true}:null;
+  await startNav();if(!st.nav)return;
+  const h=st.here;if(h){const near=nearestOnRoute(r,h.lat,h.lon);st.nav.last=near.d<REL.NEAR_M?near.i:(t.prog&&t.prog.last)||0}
+  logEv('resume',{d:sv.dest.name||'-'});navTick()}
+function relInit(){const t=relLoad();if(!t){if(store.get('trip',null))relClear();return}
+  let tries=0;const iv=setInterval(()=>{if(st.nav){clearInterval(iv);return}
+    if(st.here){clearInterval(iv);relPrompt(t)}else if(++tries>60)clearInterval(iv)},500)}
+/* -- reroute guard: debounce, >=8 s between requests, backoff on failures, offline state, ignore poor GPS fixes -- */
+function relBackoff(f){return f<=0?0:REL.BACKOFF[Math.min(f,REL.BACKOFF.length)-1]}
+function relDecide(o){ // o: {off,lastRe,now,acc,online,fails,busy} -> 'ignore'|'wait'|'offline'|'reroute'
+  if((o.acc||0)>REL.MAX_ACC)return'ignore';
+  if(o.off<REL.OFF_N||o.busy)return'wait';
+  if(!o.online)return'offline';
+  if(o.now-o.lastRe<Math.max(REL.RE_MIN,relBackoff(o.fails||0)))return'wait';
+  return'reroute'}
+function relOffRoute(n,h,near){if((h.acc||0)>REL.MAX_ACC)return false;
+  if(!n.off)logEv('off',{d:Math.round(near.d)+' m'});n.off++;
+  const a=relDecide({off:n.off,lastRe:n.lastRe,now:Date.now(),acc:h.acc,online:relOnline(),fails:n.reFail||0,busy:n.reBusy});
+  if(a==='offline')relOfflineState(n,false);
+  return a==='reroute'}
+var relBanner=null;
+function relShow(msg){if(!relBanner){relBanner=document.createElement('div');relBanner.id='relBanner';relBanner.className='hidden';relBanner.setAttribute('role','status');document.body.appendChild(relBanner);
+    const css=document.createElement('style');css.textContent='#relBanner{position:fixed;left:50%;transform:translateX(-50%);top:calc(250px + env(safe-area-inset-top));z-index:1002;background:#b45309;color:#fff;font-weight:700;border-radius:14px;padding:8px 16px;box-shadow:var(--sh);text-align:center;max-width:92vw}body:not(.navigating) #relBanner{display:none}';document.head.appendChild(css)}
+  relBanner.textContent=msg||'';relBanner.classList.toggle('hidden',!msg)}
+function relOfflineState(n,failed){const off=!relOnline();relShow(T(off?'relOffline':'relRetry'));
+  if(!n.reOff){n.reOff=1;logEv('reOff',{on:relOnline()});say(T(off?'relOfflineV':'relRetryV'))}}
+function relRerouteFail(n){n.reFail=(n.reFail||0)+1;relOfflineState(n,true)}
+function relOnRoute(n){if(n.reOff||n.reFail||(relBanner&&!relBanner.classList.contains('hidden'))){n.reOff=0;n.reFail=0;relShow('')}}
+window.addEventListener('online',()=>{logEv('net',{on:1});const n=st.nav;if(n&&n.off)n.lastRe=Math.min(n.lastRe,Date.now()-REL.RE_MIN)});
+window.addEventListener('offline',()=>logEv('net',{on:0}));
+/* -- JS error capture: LOG entries 'err' (see the error listeners near LOG); rate-limited, with file:line; report always lists recent ones -- */
+var relLastErr='',relLastErrT=0;
+function relErrInfo(e){const x=e&&e.error!==undefined?e.error:e&&e.reason!==undefined?e.reason:e;
+  let m=errMsg((x&&x.message)||(e&&e.message)||x);if(!m&&e&&e.target&&e.target!==window)return null; // resource load errors are not JS errors
+  let at='';if(e&&e.filename)at=String(e.filename).split('/').pop().slice(0,30)+':'+(e.lineno||0)+':'+(e.colno||0);
+  else if(x&&x.stack){const f=String(x.stack).split('\n').find(l=>/:\d+:\d+/.test(l));if(f)at=(f.match(/([^/\s(]+:\d+:\d+)\)?\s*$/)||[])[1]||''}
+  const now=Date.now(),key=m+at;if(key===relLastErr&&now-relLastErrT<5000)return null;relLastErr=key;relLastErrT=now;
+  const o={m:m||'error'};if(at)o.at=at;return o}
+function relReportLines(){const recent=LOG.slice(-25),set=new Set(recent);
+  const errs=LOG.filter(x=>x.k==='err'&&!set.has(x)).slice(-5);
+  return[...errs,...recent].sort((a,b)=>a.t-b.t).map(fmtLog)}
+function relApi(){return{REL,relPack,relUnpack,relValid,relFresh,relAge,relLoad,relClear,relSaveRoute,relProgress,relDecide,relBackoff,relOffRoute,relErrInfo,relReportLines,relInit,relPrompt,relResume,get banner(){return relBanner}}}
+relInit();
+/* ===== /RELIABILITY ===== */
 
 /* ---------- boot ---------- */
 document.body.classList.toggle('rider',S.rider);$('#btnRider').classList.toggle('on',S.rider);
