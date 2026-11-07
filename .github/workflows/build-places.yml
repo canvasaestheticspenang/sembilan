@@ -30,7 +30,7 @@ jobs:
       - name: Build search shards
         env:
           RELEASE: ${{ inputs.release }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_TOKEN: ${{ secrets.FSQ_HUGGINGFACE }}
         run: |
           ARGS=(--out data/places)
           if [ -n "$RELEASE" ]; then
