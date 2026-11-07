@@ -133,6 +133,7 @@ body:not(.navigating) #navTop,body:not(.navigating) #navBot,body:not(.navigating
 #toast.show{opacity:1}
 
 /* map markers */
+.me-wrap{width:40px;height:40px}.me-wrap .me-dot{position:absolute;left:9px;top:9px}.me-nav{position:absolute;left:0;top:0;width:40px;height:40px;display:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
 .me-dot{width:22px;height:22px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 0 0 6px rgba(37,99,235,.18),0 2px 6px rgba(0,0,0,.3);position:relative}
 .me-arrow{position:absolute;left:50%;top:50%;width:0;height:0;margin:-19px 0 0 -6px;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid #2563eb;transform-origin:6px 19px}
 .pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--warn);border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35)}
@@ -346,15 +347,34 @@ function startWatch(){if(!navigator.geolocation){toast(T('noGeo'));return}if(wat
 function onPos(p){const c=p.coords,first=!st.here;st.here={lat:c.latitude,lon:c.longitude,acc:c.accuracy||30,speed:c.speed,heading:c.heading,t:p.timestamp};
   if(!st.origin||st.origin.gps)st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};
   if(first)applyTheme();
-  drawMe();
   if(first&&!st.dest)map.setView([st.here.lat,st.here.lon],15);
   if(first&&st.dest&&!st.routes.length)computeRoutes();
-  if(st.nav){logFix(c);navTick()}}
+  if(st.nav){logFix(c);navTick()}
+  drawMe()}
+const meS={lat:null,lon:null,hd:0,raf:0,from:null,to:null,t0:0,dur:1000,lastP:null,lastT:0,el:null};
+const angD=(a,b)=>((b-a+540)%360)-180;
+function meFrame(now){const k=Math.min(1,(now-meS.t0)/meS.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+  meS.lat=meS.from[0]+(meS.to[0]-meS.from[0])*e;meS.lon=meS.from[1]+(meS.to[1]-meS.from[1])*e;meS.hd=(meS.hd0+angD(meS.hd0,meS.hdT)*e+360)%360;
+  meMarker.setLatLng([meS.lat,meS.lon]);accCircle.setLatLng([meS.lat,meS.lon]);
+  if(meS.el)meS.el.nav.style.transform=`rotate(${meS.hd}deg)`;
+  if(st.nav&&st.follow)followTo(meS.lat,meS.lon,map.getZoom(),false);
+  meS.raf=k<1?requestAnimationFrame(meFrame):0}
 function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.nav.bear!=null)hd=st.nav.bear;
-  const html=`<div class="me-dot"><div class="me-arrow" style="transform:rotate(${hd||0}deg);${hd==null||isNaN(hd)?'display:none':''}"></div></div>`;
-  const icon=L.divIcon({className:'',html,iconSize:[22,22],iconAnchor:[11,11]});
-  if(!meMarker){meMarker=L.marker([h.lat,h.lon],{icon,zIndexOffset:1000,interactive:false}).addTo(map);accCircle=L.circle([h.lat,h.lon],{radius:h.acc,stroke:false,fillColor:'#2563eb',fillOpacity:.1,interactive:false}).addTo(map)}
-  else{meMarker.setLatLng([h.lat,h.lon]).setIcon(icon);accCircle.setLatLng([h.lat,h.lon]).setRadius(h.acc)}}
+  const lp=meS.lastP,mv=lp?hav(lp[0],lp[1],h.lat,h.lon):0;
+  if((hd==null||isNaN(hd))&&lp&&mv>6)hd=bearing(lp[0],lp[1],h.lat,h.lon);
+  if(!lp||mv>6)meS.lastP=[h.lat,h.lon];
+  let la=h.lat,lo=h.lon;const n=st.nav;if(n&&n.snap){la=n.snap[0];lo=n.snap[1]}
+  const moving=(hd!=null&&!isNaN(hd))&&(!!n||(h.speed||0)>1.2);
+  if(!meMarker){const html=`<div class="me-dot"></div><svg class="me-nav" viewBox="0 0 40 40"><path d="M20 3 L33 35 L20 28 L7 35 Z" fill="#2563eb" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>`;
+    meMarker=L.marker([la,lo],{icon:L.divIcon({className:'me-wrap',html,iconSize:[40,40],iconAnchor:[20,20]}),zIndexOffset:1000,interactive:false}).addTo(map);
+    accCircle=L.circle([la,lo],{radius:h.acc,stroke:false,fillColor:'#2563eb',fillOpacity:.1,interactive:false}).addTo(map);
+    const w=meMarker.getElement();meS.el={dot:w.querySelector('.me-dot'),nav:w.querySelector('.me-nav')};meS.lat=la;meS.lon=lo;meS.hd=hd||0}
+  meS.el.dot.style.display=moving?'none':'';meS.el.nav.style.display=moving?'block':'none';
+  accCircle.setRadius(h.acc);
+  if(meS.raf)cancelAnimationFrame(meS.raf);
+  const gap=meS.lastT?Date.now()-meS.lastT:1000;meS.lastT=Date.now();
+  meS.from=[meS.lat,meS.lon];meS.to=[la,lo];meS.hd0=meS.hd;meS.hdT=(hd==null||isNaN(hd))?meS.hd:hd;meS.t0=performance.now();meS.dur=Math.max(400,Math.min(1500,gap));
+  meS.raf=requestAnimationFrame(meFrame)}
 
 /* ---------- search ---------- */
 const qO=$('#qOrigin'),qD=$('#qDest'),sugg=$('#sugg');
@@ -723,12 +743,13 @@ const icoVol=on=>on?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 let wake=null;async function keepAwake(){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(st.nav&&document.visibilityState==='visible')keepAwake()});
 /* Navigation camera: puts the position dot in the lower part of the screen so the road ahead is visible. */
-function followTo(lat,lon,z,anim){map.invalidateSize();let off=0;if(st.nav){const H=map.getSize().y,tb=Math.max(0,$('#navTop').getBoundingClientRect().bottom),bt=Math.min(H,$('#navBot').getBoundingClientRect().top);off=Math.round(Math.max(-H*.3,Math.min(H*.3,(tb+bt)/2-H/2)))}
-  const c=map.unproject(map.project([lat,lon],z).subtract([0,off]),z);map.setView(c,z,{animate:!!anim})}
+let _off=0,_offT=0;
+function followTo(lat,lon,z,anim){if(!anim&&Date.now()-_offT<600){const c=map.unproject(map.project([lat,lon],z).subtract([0,_off]),z);map.setView(c,z,{animate:false});return}_offT=Date.now();map.invalidateSize();let off=0;if(st.nav){const H=map.getSize().y,tb=Math.max(0,$('#navTop').getBoundingClientRect().bottom),bt=Math.min(H,$('#navBot').getBoundingClientRect().top);off=Math.round(Math.max(-H*.3,Math.min(H*.3,(tb+bt)/2-H/2)))}
+  _off=off;  const c=map.unproject(map.project([lat,lon],z).subtract([0,off]),z);map.setView(c,z,{animate:!!anim})}
 async function startNav(){startWatch();
   if(!st.origin||!st.origin.gps){toast(T('startGps'));st.origin=null;qO.value='';if(!st.here){toast(T('needOrigin'));return}st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};await computeRoutes();if(!st.routes.length)return}
   const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null};logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
-  routeLayer.clearLayers();L.polyline(r.coords,{color:'#134e4a',weight:11,opacity:.9}).addTo(routeLayer);st.nav.line=L.polyline(r.coords,{color:'#14b8a6',weight:7}).addTo(routeLayer);
+  routeLayer.clearLayers();L.polyline(r.coords,{color:'#134e4a',weight:11,opacity:.9}).addTo(routeLayer);st.nav.line=L.polyline(r.coords,{color:'#14b8a6',weight:7}).addTo(routeLayer);st.nav.done=L.polyline([],{color:'#94a3b8',weight:7,opacity:.95}).addTo(routeLayer);
   document.body.classList.add('navigating');st.follow=true;keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
   st.follow=true;if(st.here)followTo(st.here.lat,st.here.lon,17,false);
   const first=r.steps.slice(1).find(x=>!trivial(x))||r.steps[0];say((S.lang==='ms'?'Memulakan navigasi. ':'Starting navigation. ')+instr(r.steps[0])+'. '+(first!==r.steps[0]?(S.lang==='ms'?'Kemudian, ':'Then, ')+instr(first):''));
@@ -745,14 +766,14 @@ $('#btnShare').onclick=async()=>{const n=st.nav;if(!n)return;const txt=T('shareT
   try{await navigator.clipboard.writeText(txt);toast(T('copied'))}catch(e){toast(txt)}};
 async function reroute(){const n=st.nav;if(!n||!st.here)return;n.lastRe=Date.now();logEv('reroute',{});say(T('reroute'));
   try{const [r]=await fetchRoutes({lat:st.here.lat,lon:st.here.lon},st.dest,false);if(!st.nav)return;
-    const old=n.r;n.r=r;n.last=0;n.off=0;n.spoken={};n.line.setLatLngs(r.coords);routeLayer.eachLayer(l=>{if(l!==n.line)l.setLatLngs(r.coords)});
+    const old=n.r;n.r=r;n.last=0;n.off=0;n.spoken={};n.snap=null;n.line.setLatLngs(r.coords);routeLayer.eachLayer(l=>{if(l!==n.line&&l!==n.done)l.setLatLngs(r.coords)});if(n.done)n.done.setLatLngs([]);
     // reuse POIs from previous route where they still lie on the new one
     if(Array.isArray(old.pois)){r.pois=old.pois.map(p=>{const q=nearestOnRoute(r,p.lat,p.lon);return q.d<({fuel:250,rr:550,cam:45,toll:70,shelter:80})[p.type]?{...p,along:q.along}:null}).filter(Boolean)}
     st.routes=[r];st.sel=0;if(S.rider)loadRain(r);navTick()}catch(e){logEv('routeFail',{m:errMsg(e)})}}
 function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
   let near=nearestOnRoute(r,h.lat,h.lon,n.last-5,n.last+600);if(near.d>150)near=nearestOnRoute(r,h.lat,h.lon);
   const tol=Math.max(45,Math.min(h.acc*1.3,120));
-  if(near.d>tol){if(!n.off)logEv('off',{d:Math.round(near.d)+' m'});n.off++;if(n.off>=3&&Date.now()-n.lastRe>12000){reroute();return}}else{n.off=0;n.last=near.i}
+  if(near.d>tol){if(!n.off)logEv('off',{d:Math.round(near.d)+' m'});n.off++;if(n.off>=3&&Date.now()-n.lastRe>12000){reroute();return}}else{n.off=0;n.last=near.i;const c0=r.coords[near.i],c1=r.coords[Math.min(near.i+1,r.coords.length-1)];n.snap=[c0[0]+near.t*(c1[0]-c0[0]),c0[1]+near.t*(c1[1]-c0[1])];if(n.done)n.done.setLatLngs(r.coords.slice(0,near.i+1).concat([n.snap]))}
   const along=near.along;const c=r.coords,i=Math.min(near.i,c.length-2);n.bear=bearing(c[i][0],c[i][1],c[i+1][0],c[i+1][1]);
   const k=r.steps.findIndex(s=>s.along>along+5&&s.maneuver.type!=='depart'&&!trivial(s));const si=k<0?r.steps.length-1:k;const s=r.steps[si];
   const dist=Math.max(0,s.along-along);const remD=Math.max(0,r.total-along);
@@ -784,7 +805,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
         ra.innerHTML=`${T('lvl'+lvl(v))} · ${fmtDist(p.along-along)}${sh?`<br><small>${T('shelter')}: ${esc(sh.name)} · ${fmtDist(sh.along-along)}</small>`:''}`;ra.classList.remove('hidden');rainShown=true;
         const rk='r'+Math.round(p.along);if(!n.rainSaid[rk]){n.rainSaid[rk]=1;logEv('rain',{lvl:lvl(v),m:fmtDist(p.along-along)});say(`${T('lvl'+lvl(v))} ${T('aheadW')}, ${fmtDist(p.along-along)}${sh?'. '+T('shelter')+', '+sh.name+', '+fmtDist(sh.along-along):''}`)}break}}}
   if(!rainShown)ra.classList.add('hidden');
-  drawMe();if(st.follow){const z=fast?15:17;followTo(h.lat,h.lon,map.getZoom()<13?z:map.getZoom(),true)}}
+  if(st.follow&&map.getZoom()<13)map.setZoom(fast?15:17,{animate:false})}
 map.on('dragstart',()=>{if(st.nav)st.follow=false});
 function openWA(text){const num=(S.family||'').replace(/\D/g,'');const a=document.createElement('a');a.href=`https://wa.me/${num}?text=${encodeURIComponent(text)}`;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
 $('#btnFam').onclick=()=>{const n=st.nav;if(!n)return;openWA(T('startMsg')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000))))};
