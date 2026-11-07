@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="ms" data-lang="bm">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panduan Penguji Sembilan · Sembilan Tester Guide</title>
+<meta name="description" content="Panduan penguji untuk prototaip Sembilan. Tester guide for the Sembilan prototype.">
+<style>
+:root{--teal:#0f766e;--teal-dark:#115e59;--teal-soft:#f0fdfa;--ink:#1f2933;--muted:#4b5563;--line:#cbd5e1;--warn-ink:#7f1d1d;--warn-bg:#fef2f2;--warn-line:#fca5a5}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:17px;line-height:1.65;color:var(--ink);background:#ffffff}
+.wrap{max-width:640px;margin:0 auto;padding:0 18px 56px}
+.top{max-width:640px;margin:0 auto;padding:22px 18px 18px;border-bottom:3px solid var(--teal)}
+.brand{display:flex;align-items:center;gap:12px}
+.brand svg{width:40px;height:40px;flex:none}
+.brand span{font-weight:700;font-size:1.05rem;color:var(--teal-dark);letter-spacing:.02em}
+.lang{display:flex;gap:10px;margin-top:16px}
+.lang button{flex:1;min-height:48px;font:inherit;font-weight:600;font-size:1rem;border:2px solid var(--teal);background:#ffffff;color:var(--teal-dark);border-radius:12px;cursor:pointer}
+.lang button[aria-pressed="true"]{background:var(--teal);color:#ffffff}
+.lang button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid #5eead4;outline-offset:2px}
+h1{font-size:1.75rem;line-height:1.25;margin:28px 0 10px;color:var(--teal-dark)}
+h2{font-size:1.2rem;line-height:1.35;margin:0 0 12px;color:var(--teal-dark)}
+.intro{margin:0;color:var(--muted);font-size:1.02rem}
+section{margin-top:32px;padding-top:4px}
+section.card{border-top:1px solid var(--line);padding-top:24px}
+ul,ol{padding-left:1.25em;margin:0}
+li{margin:0 0 10px}
+li:last-child{margin-bottom:0}
+code,.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.95em;background:var(--teal-soft);border:1px solid #99f6e4;border-radius:6px;padding:1px 6px;color:var(--teal-dark)}
+.sub{font-weight:600}
+.btn{display:block;margin:20px 0 4px;min-height:56px;line-height:56px;text-align:center;background:var(--teal);color:#ffffff;font-weight:700;font-size:1.2rem;border-radius:14px;text-decoration:none;box-shadow:0 2px 0 var(--teal-dark)}
+.btn:hover{background:var(--teal-dark)}
+.note{background:var(--teal-soft);border-left:4px solid var(--teal);border-radius:8px;padding:12px 14px;margin:16px 0 0;color:var(--ink)}
+.warn{background:var(--warn-bg);border-left:4px solid #b91c1c;border-radius:8px;padding:12px 14px;margin:16px 0 0;color:var(--warn-ink)}
+.check{display:flex;gap:12px;align-items:flex-start;min-height:48px;padding:12px 14px;margin:0 0 10px;border:1px solid var(--line);border-radius:12px;cursor:pointer}
+.check input{width:24px;height:24px;margin:2px 0 0;flex:none;accent-color:var(--teal);cursor:pointer}
+.check span{flex:1}
+.lbl{font-weight:700;color:var(--teal-dark)}
+.bullets{margin:0}
+footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:.95rem;display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;align-items:center}
+footer a{color:var(--teal-dark);font-weight:600;text-decoration:underline;text-underline-offset:3px;min-height:44px;display:inline-flex;align-items:center}
+/* Language switch: BM is the default, EN shown when data-lang="en" */
+#en{display:none}
+html[data-lang="en"] #bm{display:none}
+html[data-lang="en"] #en{display:block}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+      <circle cx="20" cy="20" r="19" fill="#0f766e"/>
+      <path d="M20 8 L28 26 L20 22 L12 26 Z" fill="#ffffff"/>
+    </svg>
+    <span>Sembilan</span>
+  </div>
+  <div class="lang" role="group" aria-label="Pilih bahasa / Choose language">
+    <button type="button" data-set="bm" aria-pressed="true">Bahasa Malaysia</button>
+    <button type="button" data-set="en" aria-pressed="false">English</button>
+  </div>
+</header>
+
+<!-- ============ BAHASA MALAYSIA ============ -->
+<div id="bm" class="wrap">
+
+  <h1>Panduan Penguji Sembilan</h1>
+  <p class="intro">Terima kasih kerana membantu menguji Sembilan. Ini ialah prototaip, jadi sila ikut papan tanda jalan raya dan utamakan keselamatan.</p>
+
+  <section class="card">
+    <h2>1. Buka &amp; pasang</h2>
+    <ul>
+      <li><span class="sub">Android:</span> buka pautan aplikasi dalam Chrome. Tekan menu tiga titik, kemudian pilih <code>Add to Home screen</code> atau <code>Install app</code>. Nama menu mungkin berbeza mengikut versi.</li>
+      <li><span class="sub">iPhone:</span> buka pautan aplikasi dalam Safari (mesti guna Safari). Tekan butang Kongsi (ikon kotak dengan anak panah), kemudian pilih <code>Add to Home Screen</code>.</li>
+      <li>Benarkan akses lokasi apabila diminta. Selepas itu, buka Sembilan terus dari ikon di skrin utama.</li>
+    </ul>
+    <a class="btn" href="./">Buka Sembilan</a>
+  </section>
+
+  <section class="card">
+    <h2>2. Sebelum bergerak</h2>
+    <ul>
+      <li>Kuatkan volum. Pada iPhone, pastikan suis senyap dimatikan.</li>
+      <li><span class="sub">Mod motosikal:</span> tekan butang motosikal di sebelah kanan peta. Sambungkan fon kepala helmet Bluetooth <strong>sebelum</strong> menekan <strong>Mula</strong>.</li>
+      <li>Biarkan skrin menyala dan aplikasi terbuka. Pada iPhone, GPS berhenti apabila skrin dikunci atau apabila anda bertukar aplikasi.</li>
+      <li>Lekapkan telefon dengan kemas. Jangan sentuh telefon semasa menunggang. Jika boleh, cuba dahulu sebagai pembonceng.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>3. Apa yang perlu diuji</h2>
+    <p class="intro" style="margin-bottom:14px">Tandakan apa yang sudah anda semak. Bahagian ini hanya untuk rujukan anda.</p>
+    <label class="check"><input type="checkbox"><span>Cari satu tempat yang anda kenal. Adakah laluan kelihatan munasabah?</span></label>
+    <label class="check"><input type="checkbox"><span>Adakah arahan suara datang pada masa yang betul? Di lebuh raya, arahan perlu datang lebih awal.</span></label>
+    <label class="check"><input type="checkbox"><span>Apabila anda ambil simpang yang lain, adakah laluan dikira semula?</span></label>
+    <label class="check"><input type="checkbox"><span>Stesen minyak, R&amp;R, tempat berteduh dan kamera laju disenaraikan. Adakah ada yang hilang atau salah?</span></label>
+    <label class="check"><input type="checkbox"><span>Mod motosikal: adakah ramalan hujan dan amaran "hujan di hadapan" sepadan dengan cuaca sebenar?</span></label>
+    <label class="check"><input type="checkbox"><span>Amaran merah <strong>"Larangan motosikal"</strong> pada jalan yang ditutup kepada motosikal (contohnya SMART Tunnel). Adakah ia betul?</span></label>
+    <label class="check"><input type="checkbox"><span>Adakah ada apa-apa pada skrin yang mengelirukan?</span></label>
+  </section>
+
+  <section class="card">
+    <h2>4. Cara melapor</h2>
+    <ul>
+      <li>Semasa atau selepas perjalanan, tekan butang bendera <strong>Laporkan masalah</strong>. Butang ini ada di bar bawah ketika navigasi, atau dalam Tetapan (ikon gear).</li>
+      <li>Pilih kategori, tulis apa yang berlaku, kemudian tekan <strong>Hantar via WhatsApp</strong>.</li>
+      <li>Aplikasi akan melampirkan secara automatik apa yang berlaku semasa perjalanan (laluan, arahan terakhir, lokasi kasar). Anda tidak perlu terangkan semuanya.</li>
+    </ul>
+    <p class="warn">Buat laporan hanya apabila anda sudah berhenti di tempat yang selamat.</p>
+  </section>
+
+  <section class="card">
+    <h2>5. Masalah biasa</h2>
+    <ul class="bullets">
+      <li><span class="sub">Tiada lokasi:</span> benarkan lokasi untuk pelayar dalam tetapan telefon anda.</li>
+      <li><span class="sub">Tiada suara:</span> semak volum, suis senyap (iPhone) dan sambungan Bluetooth.</li>
+      <li><span class="sub">Versi lama kelihatan:</span> tutup aplikasi sepenuhnya, kemudian buka semula.</li>
+      <li><span class="sub">Peta kosong:</span> semak sambungan internet anda.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>6. Had &amp; privasi</h2>
+    <ul>
+      <li>Anggaran masa perjalanan mengandaikan tiada kesesakan lalu lintas.</li>
+      <li>Laluan datang daripada enjin penghalaan untuk kereta. Jalan yang ditutup kepada motosikal ditandakan, tetapi tidak semestinya dielakkan.</li>
+      <li>Hujan ialah anggaran daripada ramalan sahaja.</li>
+      <li>Data peta daripada OpenStreetMap mungkin ada jurang.</li>
+      <li>Tiada akaun dan tiada penjejakan. Log perjalanan kekal dalam telefon anda dan hanya dihantar apabila anda tekan <strong>Hantar</strong>.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Sembilan · prototaip</span>
+    <a href="./">Kembali ke Sembilan</a>
+  </footer>
+
+</div>
+
+<!-- ============ ENGLISH ============ -->
+<div id="en" class="wrap" lang="en">
+
+  <h1>Sembilan Tester Guide</h1>
+  <p class="intro">Thank you for helping to test Sembilan. This is a prototype, so please follow road signs and put safety first.</p>
+
+  <section class="card">
+    <h2>1. Open &amp; install</h2>
+    <ul>
+      <li><span class="sub">Android:</span> open the app link in Chrome. Tap the three-dot menu, then choose <code>Add to Home screen</code> or <code>Install app</code>. Menu names may differ by version.</li>
+      <li><span class="sub">iPhone:</span> open the link in Safari (it must be Safari). Tap the Share button (the box with an arrow), then choose <code>Add to Home Screen</code>.</li>
+      <li>Allow location access when asked. From then on, open Sembilan from the icon on your home screen.</li>
+    </ul>
+    <a class="btn" href="./">Open Sembilan</a>
+  </section>
+
+  <section class="card">
+    <h2>2. Before you go</h2>
+    <ul>
+      <li>Turn the volume up. On iPhone, make sure the silent switch is off.</li>
+      <li><span class="sub">Motorcycle mode:</span> tap the motorbike button on the right of the map. Connect your Bluetooth helmet headset <strong>before</strong> pressing <strong>Mula</strong> (Start).</li>
+      <li>Keep the screen on and the app open. On iPhone, GPS pauses when the screen locks or when you switch apps.</li>
+      <li>Mount the phone securely. Never handle the phone while riding. If you can, try it first as a passenger.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>3. What to test</h2>
+    <p class="intro" style="margin-bottom:14px">Tick off what you have checked. This list is for your own reference.</p>
+    <label class="check"><input type="checkbox"><span>Search for a place you know. Does the route look sensible?</span></label>
+    <label class="check"><input type="checkbox"><span>Do voice prompts come at the right time? On highways, prompts should come early enough.</span></label>
+    <label class="check"><input type="checkbox"><span>When you take a different turn, does the route recalculate?</span></label>
+    <label class="check"><input type="checkbox"><span>Petrol stations, R&amp;R, shelters and speed cameras are listed. Is anything missing or wrong?</span></label>
+    <label class="check"><input type="checkbox"><span>Motorcycle mode: did the rain forecast and the "rain ahead" warning match the real weather?</span></label>
+    <label class="check"><input type="checkbox"><span>The red <strong>"Larangan motosikal"</strong> (No motorcycles) warning on roads closed to motorcycles, such as SMART Tunnel. Is it correct?</span></label>
+    <label class="check"><input type="checkbox"><span>Is anything on the screen confusing?</span></label>
+  </section>
+
+  <section class="card">
+    <h2>4. How to report</h2>
+    <ul>
+      <li>During or after a trip, tap the flag button <strong>Laporkan masalah</strong> (Report a problem). It is in the bottom bar while navigating, or in Settings (gear icon).</li>
+      <li>Choose a category, write what happened, then tap <strong>Hantar via WhatsApp</strong> (Send via WhatsApp).</li>
+      <li>The app automatically attaches what happened on the trip (route, last prompts, rough location). You do not need to explain everything.</li>
+    </ul>
+    <p class="warn">Only report when you have stopped somewhere safe.</p>
+  </section>
+
+  <section class="card">
+    <h2>5. Common problems</h2>
+    <ul class="bullets">
+      <li><span class="sub">No location:</span> allow location for the browser in your phone settings.</li>
+      <li><span class="sub">No voice:</span> check the volume, the silent switch (iPhone) and your Bluetooth connection.</li>
+      <li><span class="sub">Old version showing:</span> close the app fully, then open it again.</li>
+      <li><span class="sub">Blank map:</span> check your internet connection.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>6. Limits &amp; privacy</h2>
+    <ul>
+      <li>Travel times assume there is no traffic.</li>
+      <li>Routes come from a car routing engine. Roads closed to motorcycles are flagged, but they are not always avoided.</li>
+      <li>Rain is only a forecast estimate.</li>
+      <li>Map data from OpenStreetMap may have gaps.</li>
+      <li>No account and no tracking. The trip log stays on your phone and is only sent when you press <strong>Send</strong>.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Sembilan · prototype</span>
+    <a href="./">Back to Sembilan</a>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var buttons = document.querySelectorAll('[data-set]');
+  function setLang(lang) {
+    var isEn = lang === 'en';
+    root.setAttribute('data-lang', isEn ? 'en' : 'bm');
+    root.setAttribute('lang', isEn ? 'en' : 'ms');
+    document.title = isEn
+      ? 'Sembilan Tester Guide · Panduan Penguji Sembilan'
+      : 'Panduan Penguji Sembilan · Sembilan Tester Guide';
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].setAttribute('aria-pressed', String(buttons[i].getAttribute('data-set') === lang));
+    }
+  }
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].addEventListener('click', function (e) {
+      setLang(e.currentTarget.getAttribute('data-set'));
+    });
+  }
+})();
+</script>
+</body>
+</html>
