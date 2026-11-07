@@ -220,3 +220,19 @@ describe('bottom sheet', () => {
     });
   });
 });
+
+describe('TomTom live traffic', () => {
+  it('uses TomTom times with a delay note when a key is set, and stays on OSRM times without one', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false, withDB: true, storage: { tomtom: 'TESTKEY' } }, async (ctx) => {
+      await ctx.search('gurney');
+      await ctx.waitFor(() => /Includes live traffic/.test(text(ctx, '#sheet')) || /Termasuk trafik/.test(text(ctx, '#sheet')), { what: 'traffic label' });
+      assert.ok(ctx.ttCalls.length >= 1, 'TomTom was called');
+      assert.match(sheetText(ctx), /50 min/, 'shows 3000 s as 50 min');
+      assert.match(sheetText(ctx), /\+10 min/, 'shows the 10 min delay');
+    });
+    await withApp({ rider: false, withDB: true }, async (ctx) => {
+      await ctx.search('gurney');
+      assert.equal(ctx.ttCalls.length, 0, 'no key, no TomTom call');
+    });
+  });
+});

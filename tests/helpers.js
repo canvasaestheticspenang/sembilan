@@ -139,6 +139,7 @@ async function bootApp(opts = {}) {
   const errors = [];
   let overpassCount = 0;
   let dbFetches = 0;
+  const ttCalls = [];
 
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', (e) => errors.push(e));
@@ -188,6 +189,10 @@ async function bootApp(opts = {}) {
       }
       return ok({ elements: FIXED_OVERPASS });
     }
+    if (url.includes('api.tomtom.com/routing')) {
+      ttCalls.push(url);
+      return ok({ routes: [{ summary: { travelTimeInSeconds: 3000, trafficDelayInSeconds: 600, noTrafficTravelTimeInSeconds: 2400 } }] });
+    }
     if (url.includes('photon.komoot.io')) {
       return ok({ features: [{ geometry: { coordinates: [100.44, 5.36] }, properties: { name: 'Gurney Plaza', city: 'George Town' } }] });
     }
@@ -234,6 +239,7 @@ async function bootApp(opts = {}) {
     waitFor,
     get overpassCalls() { return overpassCount; },
     get dbFetches() { return dbFetches; },
+    ttCalls,
     setPos(lat, lon, speed = 10) {
       w.__pos({ coords: { latitude: lat, longitude: lon, accuracy: 10, speed, heading: 0 }, timestamp: Date.now() });
     },
