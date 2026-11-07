@@ -1144,7 +1144,7 @@ function followTo(lat,lon,z,anim){if(!anim&&Date.now()-_offT<600){const c=map.un
   const c=map.unproject(map.project([lat,lon],z).subtract([0,_off]),z);map.setView(c,z,{animate:!!anim})}
 async function startNav(){startWatch();
   if(!st.origin||!st.origin.gps){toast(T('startGps'));st.origin=null;qO.value='';if(!st.here){toast(T('needOrigin'));return}st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};await computeRoutes();if(!st.routes.length)return}
-  const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null};logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
+  const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null,sc:{r:null,cams:[],said:{}}};SC.start();logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
   routeLayer.clearLayers();st.nav.line=addRouteLines(r.coords);st.nav.done=L.polyline([],{color:'#94a3b8',weight:7,opacity:.95,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
   document.body.classList.add('navigating');st.follow=true;applyView();keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
   st.follow=true;if(st.here)followTo(st.here.lat,st.here.lon,17,false);
@@ -1188,7 +1188,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
   $('#nIco').innerHTML=arrow(s,52,'#fff');$('#nDist').textContent=fmtDist(dist);$('#nText').textContent=instr(s);
   const nx=r.steps.slice(si+1).find(x=>!trivial(x));const th=$('#then');if(nx&&nx.along-s.along<400&&s.maneuver.type!=='arrive'){th.innerHTML=`${T('then')} ${arrow(nx,18,'#fff')}`;th.classList.remove('hidden')}else th.classList.add('hidden');
   $('#nEta').textContent=fmtClock(new Date(Date.now()+remT*1000));$('#nRem').textContent=`${fmtDur(remT)} · ${fmtDist(remD)}`;
-  const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);
+  const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);SC.tick(n,r,along,v);
   // voice prompts
   const fast=v>16;const far=fast?1500:400,mid=fast?500:150,now=Math.max(35,v*3.5);const txt=instr(s);const key=si+':';
   if(s.maneuver.type==='arrive'){if(remD<35&&!n.arrived){n.arrived=true;logEv('arrive',{});say(T('arrive'));const d=st.dest;setTimeout(()=>{if(st.nav){endNav();if(S.rider&&S.family)arrivalModal(d)}},4000)}}
@@ -1197,7 +1197,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
   else if(dist<=far+60&&dist>mid+150){if(!n.spoken[key+'f']){n.spoken[key+'f']=1;say(`${S.rider?'':T('in')+' '}${fmtDist(dist)}, ${txt}`)}}
   // camera alert + next stops
   const al=$('#alert');let camShown=false;
-  if(Array.isArray(r.pois)){const cam=r.pois.find(p=>p.type==='cam'&&p.along>along-20&&p.along-along<700);
+  if(Array.isArray(r.pois)){const cam=r.pois.find(p=>p.type==='cam'&&p.along>along-20&&p.along-along<700&&!SC.owns(p));
     if(cam){camShown=true;al.textContent=`${T('camAhead')} · ${fmtDist(Math.max(0,cam.along-along))}${cam.sub?' · '+cam.sub:''}`;al.classList.remove('hidden');const ck=cam.lat+','+cam.lon;if(!n.camSaid[ck]){n.camSaid[ck]=1;logEv('cam',{m:fmtDist(Math.max(0,cam.along-along)),s:cam.sub||'-'});setTimeout(()=>say(`${T('camAhead')}${cam.sub?', '+cam.sub.replace('km/j',S.lang==='ms'?'kilometer sejam':'kilometres per hour'):''}`),fast?2500:0)}}
     const nf=r.pois.find(p=>p.type==='fuel'&&p.along>along),nr=r.pois.find(p=>p.type==='rr'&&p.along>along),nt=r.pois.find(p=>p.type==='toll'&&p.along>along);
     $('#nextPois').innerHTML=[nf&&`<span class="chip"><i style="background:${POI_COL.fuel}"></i>${esc(nf.name)} · ${fmtDist(nf.along-along)}</span>`,nr&&`<span class="chip"><i style="background:${POI_COL.rr}"></i>${esc(nr.name)} · ${fmtDist(nr.along-along)}</span>`,nt&&`<span class="chip"><i style="background:${POI_COL.toll}"></i>${esc(nt.name)} · ${fmtDist(nt.along-along)}</span>`].filter(Boolean).join('')}
@@ -1221,6 +1221,53 @@ function setRider(on){S.rider=on;save('rider');document.body.classList.toggle('r
   if(on&&!S.radar){S.radar=true;save('radar');setRadar()}
   if(st.dest&&st.routes.length&&!st.nav)computeRoutes();else renderSheet()}
 $('#btnRider').onclick=()=>{setRider(!S.rider);toast(S.rider?T('riderOn'):T('riderOff'))};
+
+/* ===== SPEED CAMERAS =====
+   Warns about fixed speed cameras (OpenStreetMap, data/cameras.json: {asof,src,c:[[lat,lon,type,dir|null,limit|null]]}).
+   Cameras within 25 m of the active route are warned about at ~400 m and ~150 m ahead (banner + voice).
+   Never complete: unlisted cameras exist, so the settings text says to obey signs. Hooks elsewhere: startNav (SC.start),
+   navTick (SC.tick), POI camera alert (SC.owns), settings modal (SC.row / SC.bind). */
+const SC={FAR:400,NEAR:150,SNAP:25,all:null,loading:null,
+  load(){if(!SC.loading)SC.loading=getJSON('data/cameras.json',{},15000).then(j=>{SC.all=j&&Array.isArray(j.c)?j:null;return SC.all}).catch(()=>{SC.loading=null;SC.all=null;return null});return SC.loading},
+  // Cameras within SNAP metres of the route polyline, with their distance along it; opposite-side twins within 60 m are merged.
+  prepare(r){const d=SC.all;if(!d||!r||!r.coords||r.coords.length<2||!r.cum)return[];
+    let a=90,b=-90,c=180,e=-180;for(const p of r.coords){if(p[0]<a)a=p[0];if(p[0]>b)b=p[0];if(p[1]<c)c=p[1];if(p[1]>e)e=p[1]}
+    const m=0.0006,out=[];
+    for(const k of d.c){if(k[0]<a-m||k[0]>b+m||k[1]<c-m||k[1]>e+m)continue;
+      const q=nearestOnRoute(r,k[0],k[1]);if(q.d<=SC.SNAP)out.push({lat:k[0],lon:k[1],type:k[2],dir:k[3],limit:k[4],along:q.along})}
+    out.sort((x,y)=>x.along-y.along);const res=[];
+    for(const k of out){const p=res[res.length-1];if(p&&k.along-p.along<60){if(p.limit==null&&k.limit!=null)p.limit=k.limit}else res.push(k)}
+    return res},
+  start(){if(S.camAlerts)SC.load()},
+  // True when the older along-route camera alert should stay quiet for POI p: alerts are off, or this camera is already in our list.
+  owns(p){if(!S.camAlerts)return true;if(!SC.all)return false;return SC.all.c.some(k=>Math.abs(k[0]-p.lat)<0.0005&&Math.abs(k[1]-p.lon)<0.0005&&hav(k[0],k[1],p.lat,p.lon)<40)},
+  el(){let e=document.getElementById('camAlert');if(!e){e=document.createElement('div');e.id='camAlert';e.className='hidden';
+      const s=document.createElement('style');s.textContent='#camAlert{position:fixed;left:50%;transform:translateX(-50%);top:calc(192px + env(safe-area-inset-top));z-index:1001;background:#dc2626;color:#fff;font-weight:700;border-radius:999px;padding:8px 16px;box-shadow:var(--sh);white-space:nowrap;max-width:94vw;overflow:hidden;text-overflow:ellipsis}#camAlert.over{background:#7f1d1d;outline:3px solid #fff}body:not(.navigating) #camAlert{display:none}';
+      document.head.appendChild(s);document.body.appendChild(e)}return e},
+  tick(n,r,along,v){const e=SC.el();
+    if(!S.camAlerts||!SC.all){e.classList.add('hidden');return}
+    if(n.sc.r!==r){n.sc={r,cams:SC.prepare(r),said:n.sc.said||{}}}
+    const sc=n.sc;let cam=null,d=0;
+    for(const k of sc.cams){const x=k.along-along;if(x>0&&x<=SC.FAR){cam=k;d=x;break}if(x>SC.FAR)break}
+    if(!cam){e.classList.add('hidden');return}
+    const kmh=Math.round(v*3.6),over=cam.limit!=null&&kmh>cam.limit+3,id=cam.lat+','+cam.lon,ms=S.lang==='ms';
+    e.textContent=T('scBanner')(fmtDist(d),cam.limit,kmh);e.classList.toggle('over',over);e.classList.remove('hidden');
+    // Fire the 400 m line only while still outside 150 m, and the 150 m line once; a camera first seen inside 150 m skips the 400 m line.
+    const stage=d<=SC.NEAR?'n':'f';
+    if(!sc.said[id+'f']&&!sc.said[id+'n']||stage==='n'&&!sc.said[id+'n']){
+      sc.said[id+'f']=1;if(stage==='n')sc.said[id+'n']=1;
+      logEv('scam',{m:Math.round(d),l:cam.limit==null?'-':cam.limit,s:kmh});
+      say(T('scSay')(fmtDist(d),cam.limit,over))}},
+  row(){return `<div class="tog"><span>${T('scSet')}</span><button class="sw ${S.camAlerts?'on':''}" id="mSC"></button></div><div class="muted">${T('scNote')}</div>`},
+  bind(){const b=$('#mSC');if(b)b.onclick=e=>{S.camAlerts=!S.camAlerts;save('camAlerts');e.target.classList.toggle('on',S.camAlerts);if(S.camAlerts&&st.nav)SC.load();if(!S.camAlerts)SC.el().classList.add('hidden')}}};
+S.camAlerts=store.get('camAlerts',true);
+Object.assign(I.ms,{scSet:'Amaran kamera laju',scNote:'Tidak semua kamera disenaraikan; patuhi papan tanda. Data: © penyumbang OpenStreetMap (ODbL).',
+  scBanner:(d,l,s)=>l!=null?`Kamera laju ${d} · had ${l} · anda ${s} km/j`:`Kamera laju ${d}`,
+  scSay:(d,l,o)=>`Kamera laju ${d} di hadapan${l!=null?', had laju '+l+' kilometer sejam':''}${o?'. Perlahan sedikit':''}`});
+Object.assign(I.en,{scSet:'Speed camera alerts',scNote:'Not all cameras are listed; obey signs. Data: © OpenStreetMap contributors (ODbL).',
+  scBanner:(d,l,s)=>l!=null?`Speed camera ${d} · limit ${l} · you ${s} km/h`:`Speed camera ${d}`,
+  scSay:(d,l,o)=>`Speed camera ${d} ahead${l!=null?', limit '+l+' kilometres per hour':''}${o?'. Slow down':''}`});
+/* ===== END SPEED CAMERAS ===== */
 
 /* ---------- buttons & settings ---------- */
 $('#btnLocate').onclick=()=>{startWatch();st.follow=true;applyView();if(st.here)map.setView([st.here.lat,st.here.lon],Math.max(map.getZoom(),st.nav?16:15));else toast(T('needOrigin'))};
@@ -1250,6 +1297,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   <div class="tog"><span>${T('lang')}</span><div class="seg" style="width:180px"><button data-l="ms" class="${S.lang==='ms'?'on':''}">Bahasa</button><button data-l="en" class="${S.lang==='en'?'on':''}">English</button></div></div>
   <div class="tog"><span>${T('rider')}</span><button class="sw ${S.rider?'on':''}" id="mRider"></button></div>
   <div class="tog"><span>${T('voice')}</span><button class="sw ${S.voice?'on':''}" id="mVoice"></button></div>
+  ${SC.row()}
   <div class="tog"><span>${T('look')}</span><button class="btn s" id="mLook">${T('lookT')}</button></div>
   <div class="tog"><span>${T('credits')}</span><button class="btn s" id="mCred">${T('creditsB')}</button></div>
   <div class="muted">${T('family')}</div><input class="field" id="mFam" inputmode="tel" value="${esc(S.family)}" placeholder="60…">
@@ -1261,6 +1309,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   $('#mRider').onclick=e=>{setRider(!S.rider);e.target.classList.toggle('on',S.rider)};
   $('#mFam').onchange=e=>{S.family=e.target.value.trim();save('family')};
   $('#mVoice').onclick=e=>{S.voice=!S.voice;save('voice');e.target.classList.toggle('on',S.voice)};
+  SC.bind();
   $('#mLook').onclick=openLook;
   $('#mCred').onclick=openCredits;
   $('#mReport').onclick=e=>{e.preventDefault();openReport()};
