@@ -200,9 +200,9 @@ const save=k=>store.set(k,S[k]);
 /* ---------- i18n ---------- */
 const I={
 ms:{myLoc:'Lokasi saya',where:'Ke mana?',from:'Dari',saved:'Tempat disimpan',recent:'Terkini',noRes:'Tiada hasil',start:'Mula',steps:'Arahan',avoidTolls:'Elak tol',routes:'Laluan',along:'Sepanjang laluan',fuel:'Petrol',rr:'R&R',cam:'Kamera',toll:'Tol',all:'Semua',loadingPoi:'Mencari stesen petrol, R&R, tol & kamera…',poiFail:'Maklumat sepanjang laluan tidak dapat dimuatkan.',noPoi:'Tiada ditemui di sepanjang laluan ini.',end:'Tamat',arrive:'Anda telah tiba di destinasi',reroute:'Mengira semula laluan',routeFail:'Laluan tidak dapat dikira. Cuba lagi.',noGeo:'Lokasi tidak tersedia. Benarkan akses lokasi dalam pelayar.',needOrigin:'Menunggu lokasi anda…',tollFail:'Pilihan "elak" tidak dapat digunakan untuk laluan ini.',settings:'Tetapan',lang:'Bahasa',voice:'Panduan suara',dark:'Peta gelap',traffic:'Lapisan trafik langsung (TomTom)',ttKey:'Kunci API TomTom (pilihan, percuma di developer.tomtom.com)',close:'Tutup',about:'Data peta © penyumbang OpenStreetMap. Laluan: OSRM. Carian: Photon. Tiada akaun, tiada penjejakan — semuanya kekal dalam pelayar anda.',in:'Dalam',then:'Kemudian',camAhead:'Kamera laju di hadapan',km:'km',min:'min',hr:'j',arr:'Tiba',left:'lagi',shareTxt:(d,t)=>`Saya dalam perjalanan ke ${d}. Anggaran tiba ${t}.`,copied:'Disalin ke papan klip',saveP:'Simpan tempat',savedOk:'Tempat disimpan',tollsN:n=>`≈${n} plaza tol`,camsN:n=>`${n} kamera`,fuelN:n=>`${n} stesen petrol`,rrN:n=>`${n} R&R`,fromStart:'dari mula',ahead:'di hadapan',longPress:'Tekan lama pada peta untuk pilih destinasi.',pinned:'Titik dipilih',camNote:'Kamera mungkin termasuk arah bertentangan.',startGps:'Navigasi bermula dari lokasi semasa anda.',layers:'Lapisan peta',fastest:'Terpantas',
-rider:'Mod motosikal',riderOn:'Mod motosikal dihidupkan',riderOff:'Mod kereta',radar:'Radar hujan (RainViewer)',radarFail:'Radar hujan tidak dapat dimuatkan.',family:'No. WhatsApp keluarga (cth. 60123456789)',tellFamily:'Beritahu keluarga',safeArr:'Sampai dengan selamat',safeMsg:d=>`Saya sudah sampai di ${d} dengan selamat.`,startMsg:(d,t)=>`Saya mula menunggang ke ${d}. Anggaran tiba ${t}.`,weather:'Hujan sepanjang laluan',rainLoading:'Menyemak ramalan hujan…',rainFail:'Ramalan hujan tidak dapat dimuatkan.',dry:'Dijangka kering sepanjang perjalanan',rainAt:(l,p,t)=>`${l} di ${p} sekitar ${t}`,lvl1:'Hujan renyai',lvl2:'Hujan sederhana',lvl3:'Hujan lebat',bestLeave:m=>`Tunggu ${m} min untuk kurangkan hujan`,nowL:'Sekarang',startL:'Mula',destL:'Destinasi',rainAhead:'Hujan di hadapan',shelter:'Berteduh',shelterN:n=>`${n} tempat berteduh`,noMoto:'Larangan motosikal',noMotoSwitch:'Laluan lain dipilih untuk elak jalan larangan motosikal.',riderNote:'Laluan dikira oleh enjin laluan kereta; jalan larangan motosikal disemak dan ditanda.',forecastSrc:'Ramalan: Open-Meteo. Anggaran sahaja.',avoidHwy:'Elak lebuh raya',aheadW:'di hadapan',shelterName:'Tempat berteduh',loadingMore:'Memuatkan lagi sepanjang laluan…',poiPartial:'Sebahagian laluan tidak dapat dimuatkan.'},
+rider:'Mod motosikal',riderOn:'Mod motosikal dihidupkan',riderOff:'Mod kereta',radar:'Radar hujan (RainViewer)',radarFail:'Radar hujan tidak dapat dimuatkan.',family:'No. WhatsApp keluarga (cth. 60123456789)',tellFamily:'Beritahu keluarga',safeArr:'Sampai dengan selamat',safeMsg:d=>`Saya sudah sampai di ${d} dengan selamat.`,startMsg:(d,t)=>`Saya mula menunggang ke ${d}. Anggaran tiba ${t}.`,weather:'Hujan sepanjang laluan',rainLoading:'Menyemak ramalan hujan…',rainFail:'Ramalan hujan tidak dapat dimuatkan.',dry:'Dijangka kering sepanjang perjalanan',rainAt:(l,p,t)=>`${l} di ${p} sekitar ${t}`,lvl1:'Hujan renyai',lvl2:'Hujan sederhana',lvl3:'Hujan lebat',bestLeave:m=>`Tunggu ${m} min untuk kurangkan hujan`,nowL:'Sekarang',startL:'Mula',destL:'Destinasi',rainAhead:'Hujan di hadapan',shelter:'Berteduh',shelterN:n=>`${n} tempat berteduh`,noMoto:'Larangan motosikal',noMotoSwitch:'Laluan lain dipilih untuk elak jalan larangan motosikal.',riderNote:'Laluan dikira oleh enjin laluan kereta; jalan larangan motosikal disemak dan ditanda.',forecastSrc:'Ramalan: Open-Meteo. Anggaran sahaja.',avoidHwy:'Elak lebuh raya',aheadW:'di hadapan',shelterName:'Tempat berteduh',noTraffic:'Masa anggaran tanpa trafik',loadingMore:'Memuatkan lagi sepanjang laluan…',poiPartial:'Sebahagian laluan tidak dapat dimuatkan.'},
 en:{myLoc:'My location',where:'Where to?',from:'From',saved:'Saved places',recent:'Recent',noRes:'No results',start:'Start',steps:'Steps',avoidTolls:'Avoid tolls',routes:'Routes',along:'Along the route',fuel:'Petrol',rr:'R&R',cam:'Cameras',toll:'Tolls',all:'All',loadingPoi:'Finding petrol, R&R, tolls & cameras…',poiFail:'Couldn\'t load along-route info.',noPoi:'None found along this route.',end:'End',arrive:'You have arrived',reroute:'Recalculating route',routeFail:'Couldn\'t calculate a route. Try again.',noGeo:'Location unavailable. Allow location access in your browser.',needOrigin:'Waiting for your location…',tollFail:'That avoid option isn\'t available for this route.',settings:'Settings',lang:'Language',voice:'Voice guidance',dark:'Dark map',traffic:'Live traffic layer (TomTom)',ttKey:'TomTom API key (optional, free at developer.tomtom.com)',close:'Close',about:'Map data © OpenStreetMap contributors. Routing: OSRM. Search: Photon. No account, no tracking — everything stays in your browser.',in:'In',then:'Then',camAhead:'Speed camera ahead',km:'km',min:'min',hr:'h',arr:'Arrive',left:'left',shareTxt:(d,t)=>`I'm on my way to ${d}. ETA ${t}.`,copied:'Copied to clipboard',saveP:'Save place',savedOk:'Place saved',tollsN:n=>`≈${n} toll plazas`,camsN:n=>`${n} cameras`,fuelN:n=>`${n} petrol stations`,rrN:n=>`${n} R&R`,fromStart:'from start',ahead:'ahead',longPress:'Long-press the map to pick a destination.',pinned:'Dropped pin',camNote:'Cameras may include the opposite direction.',startGps:'Navigation starts from your current location.',layers:'Map layers',fastest:'Fastest',
-rider:'Motorcycle mode',riderOn:'Motorcycle mode on',riderOff:'Car mode',radar:'Rain radar (RainViewer)',radarFail:'Couldn\'t load rain radar.',family:'Family WhatsApp number (e.g. 60123456789)',tellFamily:'Tell family',safeArr:'Arrived safely',safeMsg:d=>`I've arrived safely at ${d}.`,startMsg:(d,t)=>`I'm riding to ${d}. ETA ${t}.`,weather:'Rain along the route',rainLoading:'Checking rain forecast…',rainFail:'Couldn\'t load rain forecast.',dry:'Expected dry all the way',rainAt:(l,p,t)=>`${l} near ${p} around ${t}`,lvl1:'Light rain',lvl2:'Moderate rain',lvl3:'Heavy rain',bestLeave:m=>`Wait ${m} min to avoid most rain`,nowL:'Now',startL:'Start',destL:'Destination',rainAhead:'Rain ahead',shelter:'Shelter',shelterN:n=>`${n} shelter spots`,noMoto:'No motorcycles',noMotoSwitch:'Switched to a route without no-motorcycle roads.',riderNote:'Routes come from a car routing engine; no-motorcycle roads are checked and flagged.',forecastSrc:'Forecast: Open-Meteo. Estimate only.',avoidHwy:'Avoid expressways',aheadW:'ahead',shelterName:'Shelter',loadingMore:'Loading more along the route…',poiPartial:'Part of the route couldn\'t be loaded.'}};
+rider:'Motorcycle mode',riderOn:'Motorcycle mode on',riderOff:'Car mode',radar:'Rain radar (RainViewer)',radarFail:'Couldn\'t load rain radar.',family:'Family WhatsApp number (e.g. 60123456789)',tellFamily:'Tell family',safeArr:'Arrived safely',safeMsg:d=>`I've arrived safely at ${d}.`,startMsg:(d,t)=>`I'm riding to ${d}. ETA ${t}.`,weather:'Rain along the route',rainLoading:'Checking rain forecast…',rainFail:'Couldn\'t load rain forecast.',dry:'Expected dry all the way',rainAt:(l,p,t)=>`${l} near ${p} around ${t}`,lvl1:'Light rain',lvl2:'Moderate rain',lvl3:'Heavy rain',bestLeave:m=>`Wait ${m} min to avoid most rain`,nowL:'Now',startL:'Start',destL:'Destination',rainAhead:'Rain ahead',shelter:'Shelter',shelterN:n=>`${n} shelter spots`,noMoto:'No motorcycles',noMotoSwitch:'Switched to a route without no-motorcycle roads.',riderNote:'Routes come from a car routing engine; no-motorcycle roads are checked and flagged.',forecastSrc:'Forecast: Open-Meteo. Estimate only.',avoidHwy:'Avoid expressways',aheadW:'ahead',shelterName:'Shelter',noTraffic:'Times assume no traffic',loadingMore:'Loading more along the route…',poiPartial:'Part of the route couldn\'t be loaded.'}};
 const T=k=>I[S.lang][k];
 
 /* ---------- helpers ---------- */
@@ -269,8 +269,11 @@ function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.na
 /* ---------- search ---------- */
 const qO=$('#qOrigin'),qD=$('#qDest'),sugg=$('#sugg');
 let sTimer,sCtl;
-async function geocode(q,signal){const c=map.getCenter();
-  try{const j=await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&bbox=99.5,0.8,119.5,7.5`,{signal},10000);
+function dedupePlaces(list){const out=[];for(const p of list){const k=(p.name||'').trim().toLowerCase();
+    if(out.some(o=>(o.name||'').trim().toLowerCase()===k&&((o.sub||'')===(p.sub||'')||hav(o.lat,o.lon,p.lat,p.lon)<500)))continue;out.push(p)}return out}
+async function geocode(q,signal){return dedupePlaces(await geocodeRaw(q,signal))}
+async function geocodeRaw(q,signal){const c=map.getCenter();
+  try{const j=await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&bbox=99.5,0.8,119.5,7.5`,{signal},10000);
     return j.features.map(f=>{const p=f.properties;return{lat:f.geometry.coordinates[1],lon:f.geometry.coordinates[0],name:p.name||[p.street,p.housenumber].filter(Boolean).join(' ')||q,sub:[p.name&&p.street?p.street:'',p.city||p.district||p.county,p.state].filter(Boolean).join(', ')}})}
   catch(e){if(e.name==='AbortError'&&signal&&signal.aborted)throw e;
     const j=await getJSON(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=my,sg,bn&limit=8&q=${encodeURIComponent(q)}`,{signal},10000);
@@ -313,7 +316,7 @@ map.on('contextmenu',async e=>{if(st.nav)return;const {lat,lng}=e.latlng;setDest
 /* ---------- routing ---------- */
 const OSRM='https://router.project-osrm.org/route/v1/driving/';
 async function fetchRoutes(o,d,alts){const base=`${OSRM}${o.lon},${o.lat};${d.lon},${d.lat}?overview=false&steps=true&geometries=geojson&alternatives=${alts?3:'false'}`;
-  let j,tollFallback=false;const ex=S.rider?(S.avoidHwy?['motorway']:[]):(S.avoidTolls?['toll']:[]);
+  let j,tollFallback=false;const ex=[]; // the free OSRM server rejects 'exclude' (HTTP 400); re-enable with a routing server that supports it
   if(ex.length){try{j=await getJSON(base+'&exclude='+ex.join(','));if(j.code!=='Ok')throw 0}catch(e){j=null;tollFallback=true}}
   if(!j)j=await getJSON(base);
   if(j.code!=='Ok'||!j.routes.length)throw new Error(j.code);
@@ -384,11 +387,40 @@ function finalize(list){const seen=new Set();const out=list.filter(p=>!seen.has(
   const merge={fuel:120,rr:700,cam:150,toll:600,shelter:60};const res=[];
   for(const p of out){const prev=[...res].reverse().find(q=>q.type===p.type);if(prev&&p.along-prev.along<merge[p.type]){if(prev.name.match(/^(Plaza tol|Toll plaza|R&R)$/)&&p.name)prev.name=p.name;continue}res.push({...p})}
   return res}
+/* Pre-built Malaysia data file (data/my-pois.json), refreshed weekly by GitHub Actions.
+   Instant and doesn't depend on the busy public Overpass servers; Overpass stays as a fallback. */
+const CELL=0.02;let dbP=null;
+function loadDB(){if(dbP)return dbP;dbP=(async()=>{try{const j=await getJSON('data/my-pois.json',{},25000);if(!j||!Array.isArray(j.pois))throw 0;
+    const g=new Map(),ng=new Map(),add=(m,k,v)=>{let a=m.get(k);if(!a)m.set(k,a=[]);a.push(v)},ck=(la,lo)=>Math.floor(la/CELL)+':'+Math.floor(lo/CELL);
+    j.pois.forEach((p,i)=>add(g,ck(p[1],p[2]),i));
+    (j.nomoto||[]).forEach((w,i)=>{const c=w[1],ks=new Set();for(let k=0;k<c.length;k+=2)ks.add(ck(c[k],c[k+1]));ks.forEach(k=>add(ng,k,i))});
+    return{j,g,ng}}catch(e){return null}})();return dbP}
+function mkPoi(type,lat,lon,name,extra,n,id){const ms=S.lang==='ms';let sub='';
+  if(type==='fuel'){name=name||(ms?'Stesen minyak':'Petrol station');sub=extra||''}
+  else if(type==='rr'){sub=extra==='rest_area'?(ms?'Hentian sebelah':'Lay-by'):'R&R';name=name||sub}
+  else if(type==='cam'){name=ms?'Kamera laju':'Speed camera';sub=extra?`${extra} km/j`:''}
+  else if(type==='toll'){name=name||(ms?'Plaza tol':'Toll plaza')}
+  else if(type==='shelter'){name=name||T('shelterName');sub=extra==='pt'?(ms?'Hentian bas':'Bus stop'):''}
+  return{type,lat,lon,name,sub,along:n.along,off:n.d,id}}
+function poisFromDB(db,r){const c=r.coords,cand=new Map(),wc=new Map();
+  const visit=(la,lo,i)=>{const a=Math.floor(la/CELL),b=Math.floor(lo/CELL);for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++){const k=(a+x)+':'+(b+y);
+    const P=db.g.get(k);if(P)for(const id of P)if(!cand.has(id))cand.set(id,i);const W=db.ng.get(k);if(W)for(const id of W)if(!wc.has(id))wc.set(id,i)}};
+  for(let i=0;i<c.length;i++){if(i>0){const n=Math.floor((r.cum[i]-r.cum[i-1])/1000);for(let k=1;k<=n;k++){const t=k/(n+1);visit(c[i-1][0]+(c[i][0]-c[i-1][0])*t,c[i-1][1]+(c[i][1]-c[i-1][1])*t,i-1)}}visit(c[i][0],c[i][1],i)}
+  const out=[],noMoto=[];
+  cand.forEach((i,id)=>{const [type,lat,lon,name,extra]=db.j.pois[id];if(!POI_LIM[type]||(type==='shelter'&&!S.rider))return;
+    const i0=Math.max(0,idxAt(r,r.cum[i]-1000)),i1=Math.min(c.length-1,idxAt(r,r.cum[i]+8000)+1);const n=nearestOnRoute(r,lat,lon,i0,i1);
+    if(n.d<=POI_LIM[type])out.push(mkPoi(type,lat,lon,name,extra,n,'db'+id))});
+  if(S.rider)wc.forEach((i,id)=>{const [nm,cc]=db.j.nomoto[id];let m=0;for(let k=0;k<cc.length&&m<2;k+=2)if(nearestOnRoute(r,cc[k],cc[k+1]).d<5)m++;
+    if(m>=2){const name=nm||(S.lang==='ms'?'Jalan tanpa nama':'Unnamed road');if(!noMoto.includes(name))noMoto.push(name)}});
+  return{pois:out,noMoto}}
 async function loadPois(i){const r=st.routes[i];if(!r||r._busy)return;r._busy=true;r.pois='loading';r.poisMore=false;if(!st.nav)renderSheet();
   // query the route in ~25 km pieces so the free Overpass servers don't time out on long trips
   const CH=25000,chunks=[];for(let a=0;a<r.total;a+=CH)chunks.push([a,Math.min(r.total,a+CH)]);
-  const acc=[],noMoto=[];let ok=0;
   const alive=()=>st.routes.includes(r)||(st.nav&&st.nav.r===r);
+  const db=await loadDB();
+  if(db){if(!alive()){r._busy=false;return}const d=poisFromDB(db,r);r.pois=finalize(d.pois);r.noMoto=S.rider?d.noMoto:null;r._busy=false;r.poisMore=false;r.poisPartial=false;
+    if(!st.nav)renderSheet();if(st.routes[st.sel]===r||(st.nav&&st.nav.r===r))drawPois();return}
+  const acc=[],noMoto=[];let ok=0;
   for(let c=0;c<chunks.length;c++){if(!alive())break;
     const L0=r.coords.length;const i0=Math.max(0,idxAt(r,chunks[c][0])-2),i1=Math.min(L0-1,idxAt(r,chunks[c][1])+2);
     let s=90,w=180,n=-90,e=-180;for(let k=i0;k<=i1;k++){const [la,lo]=r.coords[k];if(la<s)s=la;if(la>n)n=la;if(lo<w)w=lo;if(lo>e)e=lo}
@@ -438,6 +470,7 @@ function rainCard(r){if(!S.rider)return'';let h=`<div class="hdr" style="padding
 /* ---------- instructions ---------- */
 const MOD={ms:{'uturn':'buat pusingan U','sharp right':'belok tajam ke kanan','right':'belok kanan','slight right':'condong ke kanan','straight':'terus','slight left':'condong ke kiri','left':'belok kiri','sharp left':'belok tajam ke kiri'},
 en:{'uturn':'make a U-turn','sharp right':'turn sharp right','right':'turn right','slight right':'bear right','straight':'continue straight','slight left':'bear left','left':'turn left','sharp left':'turn sharp left'}};
+function trivial(s){const m=s.maneuver,t=m.type,mod=m.modifier||'straight';return t==='new name'||t==='notification'||(t==='continue'&&(mod==='straight'||mod==='slight left'||mod==='slight right'))}
 function instr(s){const ms=S.lang==='ms',m=s.maneuver,mod=m.modifier||'straight';const name=s.name||s.ref||'';const dest=(s.destinations||'').split(',').slice(0,2).join(', ');
   const onto=name?(ms?` ke ${name}`:` onto ${name}`):'',toward=dest?(ms?` arah ${dest}`:` toward ${dest}`):'';const turn=cap(MOD[S.lang][mod]||MOD[S.lang].straight);
   switch(m.type){
@@ -471,13 +504,11 @@ function renderSheet(loading){
       chips=`<div class="chips">${r.noMoto&&r.noMoto.length?`<span class="chip bad">⚠ ${T('noMoto')}: ${esc(r.noMoto.slice(0,2).join(', '))}</span>`:''}<span class="chip"><i style="background:${POI_COL.shelter}"></i>${T('shelterN')(sh)}</span>${c('cam')?`<span class="chip"><i style="background:${POI_COL.cam}"></i>${T('camsN')(c('cam'))}</span>`:''}</div>`}
     else if(Array.isArray(r.pois)){const c=t=>r.pois.filter(p=>p.type===t).length;const n={toll:c('toll'),cam:c('cam'),fuel:c('fuel'),rr:c('rr')};
       chips=`<div class="chips">${n.toll?`<span class="chip"><i style="background:${POI_COL.toll}"></i>${T('tollsN')(n.toll)}</span>`:''}${n.cam?`<span class="chip"><i style="background:${POI_COL.cam}"></i>${T('camsN')(n.cam)}</span>`:''}<span class="chip"><i style="background:${POI_COL.fuel}"></i>${T('fuelN')(n.fuel)}</span>${n.rr?`<span class="chip"><i style="background:${POI_COL.rr}"></i>${T('rrN')(n.rr)}</span>`:''}</div>`}
-    h+=`<button class="rc ${sel?'sel':''}" data-r="${i}"><div class="l1"><span class="dur" style="${sel?'color:var(--ac)':''}">${fmtDur(r.duration)}</span><span class="km">${fmtDist(r.distance)}</span><span class="eta">${T('arr')} ${fmtClock(new Date(now+r.duration*1000))}</span></div><div class="via">${i===0?T('fastest')+' · ':''}${esc(r.via||'')}</div>${chips}</button>`});
-  if(S.rider)h+=`<div class="tog"><span>${T('avoidHwy')}</span><button class="sw ${S.avoidHwy?'on':''}" id="swHwy"></button></div>`;
-  else h+=`<div class="tog"><span>${T('avoidTolls')}</span><button class="sw ${S.avoidTolls?'on':''}" id="swToll"></button></div>`;
-  h+=`<div class="row"><button class="btn p" id="btnStart"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2l8 19-8-4-8 4z"/></svg>${T('start')}</button><button class="btn s" id="btnSteps">${T('steps')}</button></div>`;
+    h+=`<button class="rc ${sel?'sel':''}" data-r="${i}"><div class="l1"><span class="dur" style="${sel?'color:var(--ac)':''}">${fmtDur(r.duration)}</span><span class="km">${fmtDist(r.distance)}</span><span class="eta">${T('arr')} ${fmtClock(new Date(now+r.duration*1000))}</span></div><div class="via">${i===0?T('fastest')+' · ':''}${esc(r.via||'')}</div><div class="via" style="font-size:11px">${T('noTraffic')}</div>${chips}</button>`});
+  h+=`<div class="row" style="margin-top:4px"><button class="btn p" id="btnStart"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2l8 19-8-4-8 4z"/></svg>${T('start')}</button><button class="btn s" id="btnSteps">${T('steps')}</button></div>`;
   const r=st.routes[st.sel];
   if(S.rider)h+=rainCard(r)+`<div class="muted" style="font-size:11px;margin-top:6px">${T('riderNote')}</div>`;
-  if(st.showSteps){h+=`<div class="steps pl" style="margin-top:12px">`+r.steps.filter(s=>s.maneuver.type!=='depart'||s.name).map(s=>`<div class="pi"><span class="ico">${arrow(s,30)}</span><span style="min-width:0"><div>${esc(instr(s))}</div></span><span class="km">${fmtDist(s.along)}</span></div>`).join('')+'</div>'}
+  if(st.showSteps){h+=`<div class="steps pl" style="margin-top:12px">`+r.steps.filter(s=>(s.maneuver.type!=='depart'||s.name)&&!trivial(s)).map(s=>`<div class="pi"><span class="ico">${arrow(s,30)}</span><span style="min-width:0"><div>${esc(instr(s))}</div></span><span class="km">${fmtDist(s.along)}</span></div>`).join('')+'</div>'}
   h+=`<div class="hdr" style="padding-left:2px;margin-top:10px">${T('along')}</div>`;
   if(r.pois==='loading'||r.pois==null)h+=`<div class="muted">${T('loadingPoi')}</div><div class="spin"></div>`;
   else if(r.pois==='fail')h+=`<div class="muted">${T('poiFail')} <button class="chip" id="btnRetryPoi">↻</button></div>`;
@@ -516,7 +547,7 @@ async function startNav(){startWatch();
   routeLayer.clearLayers();L.polyline(r.coords,{color:'#134e4a',weight:11,opacity:.9}).addTo(routeLayer);st.nav.line=L.polyline(r.coords,{color:'#14b8a6',weight:7}).addTo(routeLayer);
   document.body.classList.add('navigating');st.follow=true;keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
   if(st.here)map.setView([st.here.lat,st.here.lon],17);
-  const first=r.steps[1]||r.steps[0];say((S.lang==='ms'?'Memulakan navigasi. ':'Starting navigation. ')+instr(r.steps[0])+'. '+(first!==r.steps[0]?(S.lang==='ms'?'Kemudian, ':'Then, ')+instr(first):''));
+  const first=r.steps.slice(1).find(x=>!trivial(x))||r.steps[0];say((S.lang==='ms'?'Memulakan navigasi. ':'Starting navigation. ')+instr(r.steps[0])+'. '+(first!==r.steps[0]?(S.lang==='ms'?'Kemudian, ':'Then, ')+instr(first):''));
   navTick();positionFabs()}
 function endNav(){st.nav=null;document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;if('speechSynthesis' in window)speechSynthesis.cancel();drawRoutes();drawPois();renderSheet();
   if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}}
@@ -536,11 +567,11 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
   const tol=Math.max(45,Math.min(h.acc*1.3,120));
   if(near.d>tol){n.off++;if(n.off>=3&&Date.now()-n.lastRe>12000){reroute();return}}else{n.off=0;n.last=near.i}
   const along=near.along;const c=r.coords,i=Math.min(near.i,c.length-2);n.bear=bearing(c[i][0],c[i][1],c[i+1][0],c[i+1][1]);
-  const k=r.steps.findIndex(s=>s.along>along+5&&s.maneuver.type!=='depart');const si=k<0?r.steps.length-1:k;const s=r.steps[si];
+  const k=r.steps.findIndex(s=>s.along>along+5&&s.maneuver.type!=='depart'&&!trivial(s));const si=k<0?r.steps.length-1:k;const s=r.steps[si];
   const dist=Math.max(0,s.along-along);const remD=Math.max(0,r.total-along);
   const remT=r.duration*(remD/(r.total||1));n.remT=remT;
   $('#nIco').innerHTML=arrow(s,52,'#fff');$('#nDist').textContent=fmtDist(dist);$('#nText').textContent=instr(s);
-  const nx=r.steps[si+1];const th=$('#then');if(nx&&nx.along-s.along<400&&s.maneuver.type!=='arrive'){th.innerHTML=`${T('then')} ${arrow(nx,18,'#fff')}`;th.classList.remove('hidden')}else th.classList.add('hidden');
+  const nx=r.steps.slice(si+1).find(x=>!trivial(x));const th=$('#then');if(nx&&nx.along-s.along<400&&s.maneuver.type!=='arrive'){th.innerHTML=`${T('then')} ${arrow(nx,18,'#fff')}`;th.classList.remove('hidden')}else th.classList.add('hidden');
   $('#nEta').textContent=fmtClock(new Date(Date.now()+remT*1000));$('#nRem').textContent=`${fmtDur(remT)} · ${fmtDist(remD)}`;
   const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);
   // voice prompts
@@ -594,21 +625,20 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   <div class="tog"><span>${T('rider')}</span><button class="sw ${S.rider?'on':''}" id="mRider"></button></div>
   <div class="tog"><span>${T('voice')}</span><button class="sw ${S.voice?'on':''}" id="mVoice"></button></div>
   <div class="muted">${T('family')}</div><input class="field" id="mFam" inputmode="tel" value="${esc(S.family)}" placeholder="60…">
-  <div class="tog"><span>${T('avoidTolls')}</span><button class="sw ${S.avoidTolls?'on':''}" id="mToll"></button></div>
   <p class="muted">${T('about')}</p>
   <div style="text-align:right"><button class="btn s" data-close>${T('close')}</button></div>`);
   document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{S.lang=b.dataset.l;save('lang');applyLang();$('#btnSettings').click()});
   $('#mRider').onclick=e=>{setRider(!S.rider);e.target.classList.toggle('on',S.rider)};
   $('#mFam').onchange=e=>{S.family=e.target.value.trim();save('family')};
   $('#mVoice').onclick=e=>{S.voice=!S.voice;save('voice');e.target.classList.toggle('on',S.voice)};
-  $('#mToll').onclick=e=>{S.avoidTolls=!S.avoidTolls;save('avoidTolls');e.target.classList.toggle('on',S.avoidTolls);if(st.dest)computeRoutes()}};
+};
 function applyLang(){document.documentElement.lang=S.lang;qO.placeholder=T('myLoc');qD.placeholder=T('where');$('#speed span').textContent=S.lang==='ms'?'km/j':'km/h';$('#btnEnd').textContent=T('end');
   if(st.origin&&st.origin.gps)st.origin.name=T('myLoc');renderSheet()}
 window.addEventListener('resize',positionFabs);
 
 /* ---------- boot ---------- */
 document.body.classList.toggle('rider',S.rider);$('#btnRider').classList.toggle('on',S.rider);
-applyLang();startWatch();
+applyLang();startWatch();loadDB();
 </script>
 </body>
 </html>

@@ -1,0 +1,47 @@
+name: Update map data
+
+# Rebuilds data/my-pois.json (petrol, R&R, tolls, speed cameras, shelters,
+# no-motorcycle roads) from OpenStreetMap every week.
+on:
+  schedule:
+    - cron: "17 19 * * 0"   # Sunday 19:17 UTC = Monday 3:17am Malaysia time
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/build_pois.py"
+      - ".github/workflows/update-data.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osmium
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+
+      - name: Download Malaysia/Singapore/Brunei extract
+        run: curl -fsSL --retry 3 -o region.osm.pbf https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf
+
+      - name: Filter and export
+        run: |
+          osmium tags-filter region.osm.pbf \
+            nwr/amenity=fuel,shelter nwr/highway=services,rest_area,speed_camera \
+            nwr/barrier=toll_booth w/motorcycle=no \
+            -o filtered.osm.pbf --overwrite
+          osmium export filtered.osm.pbf -f geojsonseq -o filtered.geojsonseq --overwrite
+
+      - name: Build data file
+        run: python3 scripts/build_pois.py filtered.geojsonseq data/my-pois.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/my-pois.json
+          git diff --cached --quiet || (git commit -m "Update map data" && git push)
