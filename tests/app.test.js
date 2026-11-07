@@ -298,3 +298,35 @@ describe('heading-up view and passed route', () => {
     });
   });
 });
+
+describe('official PLUS fares', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const plus = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'plus-fares.json'), 'utf8'));
+  const idx = (c) => plus.plazas.findIndex((p) => p.c === c);
+  const fare = (a, b) => { const [i, j] = [idx(a), idx(b)].sort((x, y) => x - y); return plus.m[i][j - i - 1]; };
+
+  it('has the official table: Jitra to Skudai is RM83.88 and the table is indexed correctly', () => {
+    assert.equal(plus.plazas.length, 94);
+    assert.equal(fare('JTR', 'SKD'), 83.88);
+    assert.equal(fare('SKD', 'JTR'), 83.88);
+    assert.equal(fare('TGK', 'PGH'), 3.12);
+  });
+
+  it('uses the official fare for a route that passes an entry and an exit plaza, and falls back otherwise', { timeout: TIMEOUT }, async () => {
+    await withApp({}, async ({ app }) => {
+      app.setTollD({ nse: 0.1124, plazas: [], plus });
+      const a = plus.plazas[idx('BTU')].p, b = plus.plazas[idx('BTS')].p;
+      const hav = (p, q) => Math.hypot((p[0] - q[0]) * 110540, (p[1] - q[1]) * 111320 * Math.cos(p[0] * Math.PI / 180));
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const coords = [a, mid, b];
+      const cum = [0, hav(a, mid), hav(a, mid) + hav(mid, b)];
+      const km = cum[2] / 1000;
+      const r = { toll: true, coords, cum, tseg: [{ nm: 'Lebuhraya Utara-Selatan', km, i0: 0, i1: 2 }] };
+      const f = app.plusFare(r);
+      assert.equal(f, fare('BTU', 'BTS'));
+      const far = { ...r, coords: [[1, 100], [1.01, 100.01]], cum: [0, 1500], tseg: [{ nm: 'Lebuhraya Utara-Selatan', km: 1.5, i0: 0, i1: 1 }] };
+      assert.equal(app.plusFare(far), null, 'no plazas on the route -> estimate is used');
+    });
+  });
+});

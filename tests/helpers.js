@@ -218,6 +218,9 @@ async function bootApp(opts = {}) {
     if (url.includes('photon.komoot.io')) {
       return ok({ features: [{ geometry: { coordinates: [100.44, 5.36] }, properties: { name: 'Gurney Plaza', city: 'George Town' } }] });
     }
+    if (url.includes('data/plus-fares.json')) {
+      return ok(JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'plus-fares.json'), 'utf8')));
+    }
     if (url.includes('data/tolls.json')) {
       return ok(JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'tolls.json'), 'utf8')));
     }
@@ -250,7 +253,7 @@ async function bootApp(opts = {}) {
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase};`);
+  w.eval(`${app}\n;window.__app={plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase};`);
   w.__said = said;
 
   const ctx = {
