@@ -417,10 +417,13 @@ var zoomSaved=null,zoomAnimRaf=0;
 function zoomMode(on){const mp=map.getPane&&map.getPane('mapPane');
   if(on&&!zoomSaved){zoomSaved={snap:map.options.zoomSnap,za:map._zoomAnimated};map.options.zoomSnap=0;map._zoomAnimated=false;if(mp)mp.classList.remove('leaflet-zoom-anim')}
   else if(!on&&zoomSaved){map.options.zoomSnap=zoomSaved.snap;map._zoomAnimated=zoomSaved.za;if(mp&&zoomSaved.za)mp.classList.add('leaflet-zoom-anim');zoomSaved=null;map.setZoom(Math.round(map.getZoom()),{animate:false})}}
+/* Every zoom goes through setZ: while following, the view is re-anchored on the SAME animated position the avatar is drawn at (meS), so avatar, route and map can't drift apart. */
+function setZ(z){z=Math.max(3,Math.min(19,z));
+  if(st.nav&&st.follow&&st.here)followTo(meS.lat!=null?meS.lat:st.here.lat,meS.lon!=null?meS.lon:st.here.lon,z,false);else map.setZoom(z,{animate:false})}
 function smoothZoom(to,ms){cancelAnimationFrame(zoomAnimRaf);const from=map.getZoom(),t0=performance.now(),d=ms||220;
   if(!zoomSaved||!window.requestAnimationFrame){map.setZoom(to);return}
   const step=now=>{const k=Math.min(1,(now-t0)/d),e=1-Math.pow(1-k,3),z=from+(to-from)*e;
-    if(st.nav&&st.follow&&st.here)followTo(st.here.lat,st.here.lon,z,false);else map.setZoom(z,{animate:false});
+    setZ(z);
     zoomAnimRaf=k<1?requestAnimationFrame(step):0};
   zoomAnimRaf=requestAnimationFrame(step)}
 function cartoonStop(){cartoonRun++;avatarTheme(null);zoomMode(false);
@@ -441,6 +444,7 @@ function cartoonStart(){
     const layer=L.maplibreGL({style:CARTOON.style,padding:.15,interactive:false,fadeDuration:0,pixelRatio:Math.min(window.devicePixelRatio||1,3)});
     layer.addTo(map);cartoonL=layer;zoomMode(true);
     const gm=layer.getMaplibreMap();
+    map.on('move zoom',()=>{try{gm.redraw()}catch(e){}});/* maplibre paints on its own frame; force it so the map moves in the same frame as route and avatar */
     timer=setTimeout(bad,CARTOON.timeout);
     gm.on('error',ev=>{if(!done)bad()});
     gm.once('load',()=>{
@@ -1263,13 +1267,16 @@ $('#btnEnd').onclick=endNav;
 $('#hdTap').onclick=()=>{st.follow=false;applyView()};
 function zoomBy(d){const base=zoomSaved?map.getZoom():Math.round(map.getZoom()),z=Math.max(3,Math.min(19,(zoomSaved?Math.round(base*2)/2:base)+d));
   if(zoomSaved){smoothZoom(z);return}
-  if(st.nav&&st.follow&&st.here){map.setZoom(z,{animate:false});followTo(st.here.lat,st.here.lon,z,false)}else map.setZoom(z)}
+  setZ(z)}
 $('#btnZin').onclick=()=>zoomBy(1);$('#btnZout').onclick=()=>zoomBy(-1);
-/* pinch on the rotated map: two fingers zoom without leaving navigation view */
-(()=>{const el=$('#hdTap');let d0=0,done=false;const dist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-  el.addEventListener('touchstart',e=>{if(e.touches.length===2){d0=dist(e);done=false}},{passive:true});
-  el.addEventListener('touchmove',e=>{if(e.touches.length!==2||done||!d0)return;const r=dist(e)/d0;if(r>1.3){zoomBy(1);done=true}else if(r<.75){zoomBy(-1);done=true}},{passive:true});
-  el.addEventListener('touchend',e=>{if(e.touches.length<2)d0=0},{passive:true})})();
+/* pinch: one handler for both north-up and heading-up. Continuous (zoom follows the fingers), Leaflet's own touch zoom is off so the two can't fight. */
+(()=>{try{map.touchZoom.disable();map.doubleClickZoom.disable()}catch(e){}
+  let d0=0,z0=0;const dist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  const ok=e=>e.target&&e.target.closest&&e.target.closest('#map,#hdTap');
+  document.addEventListener('touchstart',e=>{if(e.touches.length===2&&ok(e)){d0=dist(e);z0=map.getZoom();cancelAnimationFrame(zoomAnimRaf)}else d0=0},{passive:true});
+  document.addEventListener('touchmove',e=>{if(e.touches.length!==2||!d0)return;setZ(z0+Math.log2(dist(e)/d0))},{passive:true});
+  document.addEventListener('touchend',()=>{d0=0},{passive:true});
+  document.addEventListener('dblclick',e=>{if(ok(e)){zoomBy(1)}})})();
 $('#btnView').onclick=()=>{S.view=S.view==='n'?'h':S.view==='h'?'t':'n';save('view');st.follow=true;applyView();updView();toast({n:T('vN'),h:T('vH'),t:T('v3')}[S.view])};
 function updView(){$('#btnView').classList.toggle('on',S.view!=='n');$('#btnView svg').style.transform=S.view==='n'?'':'rotate(-35deg)'}updView();
 $('#btnReport').onclick=()=>openReport();
@@ -1318,7 +1325,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProg
         ra.innerHTML=`${T('lvl'+lvl(v))} · ${fmtDist(p.along-along)}${sh?`<br><small>${T('shelter')}: ${esc(sh.name)} · ${fmtDist(sh.along-along)}</small>`:''}`;ra.classList.remove('hidden');rainShown=true;
         const rk='r'+Math.round(p.along);if(!n.rainSaid[rk]){n.rainSaid[rk]=1;logEv('rain',{lvl:lvl(v),m:fmtDist(p.along-along)});say(`${T('lvl'+lvl(v))} ${T('aheadW')}, ${fmtDist(p.along-along)}${sh?'. '+T('shelter')+', '+sh.name+', '+fmtDist(sh.along-along):''}`)}break}}}
   if(!rainShown)ra.classList.add('hidden');
-  if(st.follow&&map.getZoom()<13)map.setZoom(fast?15:17,{animate:false})}
+  if(st.follow&&!n.zset){n.zset=1;if(map.getZoom()<13)setZ(fast?15:17)}}
 map.on('dragstart',()=>{if(st.nav){st.follow=false;applyView()}});
 function openWA(text){const num=(S.family||'').replace(/\D/g,'');const a=document.createElement('a');a.href=`https://wa.me/${num}?text=${encodeURIComponent(text)}`;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
 $('#btnFam').onclick=()=>{const n=st.nav;if(!n)return;openWA(T('startMsg')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000))))};
