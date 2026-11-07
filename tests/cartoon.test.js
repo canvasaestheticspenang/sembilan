@@ -125,4 +125,23 @@ describe('cartoon map (experimental)', () => {
       assert.equal(bg && bg[2], ctx.app.cartoonPal().land);
     });
   });
+
+  it('while the vector map is on, zoom is animated in step with the route and restored when off', { timeout: TIMEOUT }, async () => {
+    await withApp({}, async (ctx) => {
+      const { gm, made } = installFake(ctx);
+      ctx.document.querySelector('#btnLayers').click();
+      ctx.document.querySelector('#mCartoon').click();
+      await ctx.waitFor(() => made.length === 1, { what: 'the vector layer' });
+      gm.emit('load');
+      const map = ctx.app.map;
+      assert.equal(map.options.zoomSnap, 0);
+      const z0 = map.getZoom();
+      ctx.app.zoomBy(1);
+      await ctx.sleep(400);
+      assert.ok(Math.abs(map.getZoom() - (z0 + 1)) < 0.01, 'reached the target zoom');
+      ctx.document.querySelector('#btnLayers').click();
+      ctx.document.querySelector('#mCartoon').click();
+      assert.equal(map.options.zoomSnap, 1, 'default zoom snap restored');
+    });
+  });
 });

@@ -363,6 +363,17 @@ describe('place index search', () => {
 });
 
 describe('avatar and route look', () => {
+  it('removes the uploaded face photo and falls back to the arrow', { timeout: TIMEOUT }, async () => {
+    await withApp({}, async (ctx) => {
+      const url = 'data:image/png;base64,iVBORw0KGgo=';
+      assert.equal(ctx.app.storeFace(url), true);
+      assert.equal(ctx.app.S.avatar, 'face');
+      ctx.app.removeFace();
+      assert.equal(ctx.app.S.avatarImg, '');
+      assert.equal(ctx.app.S.avatar, 'arrow');
+      assert.equal(ctx.app.store.get('avatarImg', null), '');
+    });
+  });
   const FACE = 'data:image/jpeg;base64,/9j/4AAQ';
   it('choosing an avatar persists in S and swaps the marker content', { timeout: TIMEOUT }, async () => {
     await withApp({ withDB: false }, async (ctx) => {
@@ -429,6 +440,22 @@ describe('avatar and route look', () => {
       assert.equal(ctx.app.S.avatar, 'cat');
       assert.equal(ctx.app.S.routeColor, 'blue');
       assert.ok(ctx.document.querySelector('[data-av="cat"]').classList.contains('on'));
+    });
+  });
+});
+
+describe('back button guard', () => {
+  it('first back while navigating only warns, second ends navigation', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false }, async (ctx) => {
+      await ctx.search('gurney');
+      await readyRoute(ctx);
+      ctx.document.querySelector('#btnStart').click();
+      assert.ok(ctx.app.st.nav, 'navigating');
+      ctx.document.querySelector('#modal').classList.add('hidden');
+      ctx.window.dispatchEvent(new ctx.window.PopStateEvent('popstate'));
+      assert.ok(ctx.app.st.nav, 'still navigating after the first back');
+      ctx.window.dispatchEvent(new ctx.window.PopStateEvent('popstate'));
+      assert.ok(!ctx.app.st.nav, 'second back ends navigation');
     });
   });
 });
