@@ -108,6 +108,20 @@ function longRoute() {
 }
 
 const jsonOk = (body) => ({ ok: true, status: 200, json: async () => body });
+// Valhalla answer: shape is a polyline6 string, maneuvers index into it.
+function enc6(pts) {
+  let la = 0, lo = 0, out = '';
+  const put = (v) => { v = v < 0 ? ~(v << 1) : v << 1; while (v >= 32) { out += String.fromCharCode((32 | (v & 31)) + 63); v >>= 5; } out += String.fromCharCode(v + 63); };
+  for (const [a, b] of pts) { const x = Math.round(a * 1e6), y = Math.round(b * 1e6); put(x - la); put(y - lo); la = x; lo = y; }
+  return out;
+}
+function valTrip(km, toll) {
+  const pts = []; for (let i = 0; i <= 60; i++) pts.push([5.3 + i * 0.001, 100.4]);
+  return { status: 0, summary: { length: km, time: km * 90, has_toll: toll, has_highway: toll },
+    legs: [{ shape: enc6(pts), maneuvers: [
+      { type: 1, begin_shape_index: 0, street_names: [toll ? 'Lebuhraya Tol' : 'Jalan Biasa'], length: km },
+      { type: 4, begin_shape_index: 60, length: 0 } ] }] };
+}
 const notFound = () => ({ ok: false, status: 404, json: async () => { throw new SyntaxError('not found'); } });
 
 /**
@@ -140,6 +154,7 @@ async function bootApp(opts = {}) {
   let overpassCount = 0;
   let dbFetches = 0;
   const ttCalls = [];
+  const valBodies = [];
 
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', (e) => errors.push(e));
@@ -160,6 +175,13 @@ async function bootApp(opts = {}) {
 
     if (url.includes('rainviewer.com')) {
       return ok({ host: 'https://tilecache.rainviewer.com', radar: { past: [{ time: now, path: '/v2/radar/x' }] } });
+    }
+    if (url.includes('valhalla1.openstreetmap.de')) {
+      if (!cfg.valhalla) return notFound();
+      const body = JSON.parse(opt.body);
+      valBodies.push(body);
+      const noToll = Object.values(body.costing_options)[0].use_tolls === 0;
+      return ok(noToll ? { trip: valTrip(9.5, false) } : { trip: valTrip(6.7, true), alternates: [{ trip: valTrip(7.4, true) }] });
     }
     if (url.includes('project-osrm.org')) {
       return ok({ code: 'Ok', routes: serveRoutes() });
@@ -240,6 +262,7 @@ async function bootApp(opts = {}) {
     get overpassCalls() { return overpassCount; },
     get dbFetches() { return dbFetches; },
     ttCalls,
+    valBodies,
     setPos(lat, lon, speed = 10) {
       w.__pos({ coords: { latitude: lat, longitude: lon, accuracy: 10, speed, heading: 0 }, timestamp: Date.now() });
     },

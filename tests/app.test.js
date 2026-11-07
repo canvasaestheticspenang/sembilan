@@ -236,3 +236,27 @@ describe('TomTom live traffic', () => {
     });
   });
 });
+
+describe('Valhalla routing', () => {
+  it('shows toll and no-toll alternatives, and asks for motorcycle costing in rider mode', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: true, withDB: true, valhalla: true }, async (ctx) => {
+      await ctx.search('gurney');
+      assert.equal(ctx.document.querySelectorAll('.rc').length, 3, 'two toll routes plus the no-toll one');
+      const t = sheetText(ctx);
+      assert.match(t, /Tanpa tol|No tolls/, 'no-toll route is labelled');
+      assert.match(t, /Ada tol|Tolls/, 'toll route is labelled');
+      assert.equal(Object.keys(ctx.valBodies[0].costing_options)[0], 'motorcycle');
+      assert.ok(ctx.valBodies.some((b) => Object.values(b.costing_options)[0].use_tolls === 0), 'asked for a no-toll variant');
+    });
+    await withApp({ rider: false, withDB: true, valhalla: true }, async (ctx) => {
+      await ctx.search('gurney');
+      assert.equal(Object.keys(ctx.valBodies[0].costing_options)[0], 'auto', 'car by default');
+    });
+  });
+  it('falls back to the other router when Valhalla fails', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false, withDB: true }, async (ctx) => {
+      await ctx.search('gurney');
+      assert.ok(ctx.document.querySelectorAll('.rc').length >= 1, 'routes still shown');
+    });
+  });
+});
