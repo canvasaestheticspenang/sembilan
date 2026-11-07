@@ -105,23 +105,23 @@ describe('cartoon map (experimental)', () => {
     });
   });
 
-  it('offers five map themes that recolour the vector map and are remembered', { timeout: TIMEOUT }, async () => {
+  it('offers eleven map themes that recolour the vector map and are remembered', { timeout: TIMEOUT }, async () => {
     await withApp({}, async (ctx) => {
       const { gm, made } = installFake(ctx);
-      assert.deepEqual(Object.keys(ctx.app.MAP_THEMES), ['cartoon', 'candy', 'forest', 'sunset', 'neon']);
+      assert.deepEqual(Object.keys(ctx.app.MAP_THEMES), ['cartoon', 'vintage', 'popart', 'ligne', 'memphis', 'cyber', 'kawaii', 'ghibli', 'lowpoly', 'lofi', 'grunge']);
       ctx.document.querySelector('#btnLayers').click();
       ctx.document.querySelector('#mCartoon').click();
       await ctx.waitFor(() => made.length === 1, { what: 'the vector layer' });
       gm.emit('load');
       ctx.document.querySelector('#btnLayers').click();
       const chips = ctx.document.querySelectorAll('[data-mt]');
-      assert.equal(chips.length, 5);
+      assert.equal(chips.length, 11);
       gm.painted.length = 0;
-      ctx.document.querySelector('[data-mt="neon"]').click();
-      assert.equal(ctx.app.S.mapTheme, 'neon');
-      assert.equal(ctx.app.store.get('mapTheme', null), 'neon');
+      ctx.document.querySelector('[data-mt="vintage"]').click();
+      assert.equal(ctx.app.S.mapTheme, 'vintage');
+      assert.equal(ctx.app.store.get('mapTheme', null), 'vintage');
       const bg = gm.painted.find((x) => x[0] === 'background');
-      assert.equal(bg && bg[2], ctx.app.MAP_THEMES.neon.light.land);
+      assert.equal(bg && bg[2], ctx.app.cartoonPal().land);
     });
   });
 });
