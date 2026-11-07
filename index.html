@@ -208,7 +208,8 @@ body.rider #btnShare{display:none}
 if(!window.L){document.getElementById('bootMsg').innerHTML='<b>Peta tidak dapat dimuatkan — tiada sambungan internet atau pratonton menyekatnya.</b><br>Map library blocked — no internet, or this preview blocks it.';throw new Error('Leaflet not loaded')}
 /* ---------- storage & settings ---------- */
 const store={get(k,d){try{const v=localStorage.getItem('s9_'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('s9_'+k,JSON.stringify(v))}catch(e){}}};
-const S={lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:store.get('tomtom',''),traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false)};
+const TT_DEFAULT=''; // optional built-in TomTom key (restrict it to this site's domain in the TomTom dashboard)
+const S={lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:store.get('tomtom','')||TT_DEFAULT,traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false)};
 const save=k=>store.set(k,S[k]);
 const APP_VER='2026.11.07';
 const REPORT_TO='';// owner's WhatsApp number e.g. 60123456789; empty = tester picks a contact
@@ -688,12 +689,15 @@ const icoVol=on=>on?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 /* ---------- navigation ---------- */
 let wake=null;async function keepAwake(){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(st.nav&&document.visibilityState==='visible')keepAwake()});
+/* Navigation camera: puts the position dot in the lower part of the screen so the road ahead is visible. */
+function followTo(lat,lon,z,anim){map.invalidateSize();const off=st.nav?Math.round(map.getSize().y*0.18):0;
+  const c=map.unproject(map.project([lat,lon],z).subtract([0,off]),z);map.setView(c,z,{animate:!!anim})}
 async function startNav(){startWatch();
   if(!st.origin||!st.origin.gps){toast(T('startGps'));st.origin=null;qO.value='';if(!st.here){toast(T('needOrigin'));return}st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};await computeRoutes();if(!st.routes.length)return}
   const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null};logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
   routeLayer.clearLayers();L.polyline(r.coords,{color:'#134e4a',weight:11,opacity:.9}).addTo(routeLayer);st.nav.line=L.polyline(r.coords,{color:'#14b8a6',weight:7}).addTo(routeLayer);
   document.body.classList.add('navigating');st.follow=true;keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
-  if(st.here)map.setView([st.here.lat,st.here.lon],17);
+  st.follow=true;if(st.here)followTo(st.here.lat,st.here.lon,17,false);
   const first=r.steps.slice(1).find(x=>!trivial(x))||r.steps[0];say((S.lang==='ms'?'Memulakan navigasi. ':'Starting navigation. ')+instr(r.steps[0])+'. '+(first!==r.steps[0]?(S.lang==='ms'?'Kemudian, ':'Then, ')+instr(first):''));
   navTick();positionFabs();tipCard()}
 function tipCard(){const tk='tipsSeen'+(S.rider?'Moto':'Car');if(store.get(tk,false))return;store.set(tk,true);const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
@@ -747,7 +751,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
         ra.innerHTML=`${T('lvl'+lvl(v))} · ${fmtDist(p.along-along)}${sh?`<br><small>${T('shelter')}: ${esc(sh.name)} · ${fmtDist(sh.along-along)}</small>`:''}`;ra.classList.remove('hidden');rainShown=true;
         const rk='r'+Math.round(p.along);if(!n.rainSaid[rk]){n.rainSaid[rk]=1;logEv('rain',{lvl:lvl(v),m:fmtDist(p.along-along)});say(`${T('lvl'+lvl(v))} ${T('aheadW')}, ${fmtDist(p.along-along)}${sh?'. '+T('shelter')+', '+sh.name+', '+fmtDist(sh.along-along):''}`)}break}}}
   if(!rainShown)ra.classList.add('hidden');
-  drawMe();if(st.follow){const z=fast?15:17;map.setView([h.lat,h.lon],map.getZoom()<13?z:map.getZoom(),{animate:true})}}
+  drawMe();if(st.follow){const z=fast?15:17;followTo(h.lat,h.lon,map.getZoom()<13?z:map.getZoom(),true)}}
 map.on('dragstart',()=>{if(st.nav)st.follow=false});
 function openWA(text){const num=(S.family||'').replace(/\D/g,'');const a=document.createElement('a');a.href=`https://wa.me/${num}?text=${encodeURIComponent(text)}`;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
 $('#btnFam').onclick=()=>{const n=st.nav;if(!n)return;openWA(T('startMsg')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000))))};
