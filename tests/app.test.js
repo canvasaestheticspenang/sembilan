@@ -275,3 +275,26 @@ describe('toll price estimate', () => {
     });
   });
 });
+
+describe('heading-up view and passed route', () => {
+  it('cycles north-up / heading-up / 3D and greys the route already passed', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false }, async (ctx) => {
+      await ctx.search('gurney');
+      await readyRoute(ctx);
+      ctx.document.querySelector('#btnStart').click();
+      const b = ctx.document.body;
+      assert.ok(b.classList.contains('hv'), 'heading-up is the default while navigating');
+      ctx.document.querySelector('#btnView').click();
+      assert.ok(b.classList.contains('tv'), '3D on second tap');
+      ctx.document.querySelector('#btnView').click();
+      assert.ok(!b.classList.contains('hv'), 'north-up on third tap');
+      ctx.document.querySelector('#btnView').click();
+      assert.ok(b.classList.contains('hv'));
+      ctx.document.querySelector('#hdTap').click();
+      assert.ok(!b.classList.contains('hv'), 'tapping the map leaves heading-up so it can be dragged');
+      ctx.setPos(5.33, 100.4);
+      await ctx.sleep(30);
+      assert.deepEqual(ctx.errors.map((e) => e.message), []);
+    });
+  });
+});
