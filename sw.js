@@ -99,9 +99,8 @@ async function cacheFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
   const hit = await cache.match(req.url);
   if (hit) return hit;
-  const res = await fetch(req);
-  // Leaflet and tile requests are no-cors, so their responses are opaque (ok is false).
-  if (res.ok || res.type === 'opaque') cache.put(req.url, res.clone()).catch(() => {});
+  const res = await corsFetch(req);
+  if (res.ok) cache.put(req.url, res.clone()).catch(() => {});
   return res;
 }
 
@@ -109,13 +108,28 @@ async function tileCacheFirst(req) {
   const cache = await caches.open(TILE_CACHE);
   const hit = await cache.match(req.url);
   if (hit) return hit;
-  const res = await fetch(req);
-  if (res.ok || res.type === 'opaque') {
+  const res = await corsFetch(req);
+  // Only cache real successes: opaque responses can hide errors and cost
+  // several MB each against the browser's storage quota.
+  if (res.ok) {
     cache.put(req.url, res.clone())
       .then(() => trimCache(TILE_CACHE, MAX_TILES))
       .catch(() => {});
   }
   return res;
+}
+
+// Cross-origin files (Leaflet CDN, Esri and OSM tiles) all send CORS headers,
+// so fetch them in cors mode to get a readable status; fall back to the
+// original request (not cached) if that fails.
+async function corsFetch(req) {
+  const sameOrigin = new URL(req.url).origin === self.location.origin;
+  if (sameOrigin) return fetch(req);
+  try {
+    return await fetch(req.url, { mode: 'cors', credentials: 'omit' });
+  } catch (err) {
+    return fetch(req);
+  }
 }
 
 async function trimCache(name, max) {
