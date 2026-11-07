@@ -341,3 +341,19 @@ describe('pasted coordinates and map links', () => {
     });
   });
 });
+
+describe('place index search', () => {
+  it('finds every Uo Shin branch from the place index, nearest first', { timeout: TIMEOUT }, async () => {
+    const rows = [
+      ['Uo Shin', 5.4172, 100.3213, 'George Town', 'Japanese Restaurant'],
+      ['Uo Shin', 3.2194, 101.6460, 'Kepong', 'Japanese Restaurant'],
+      ['Uo Shin Hartamas', 3.1650, 101.6500, 'Kuala Lumpur', 'Japanese Restaurant'],
+      ['Uo Shin Puchong', 3.0300, 101.6200, 'Puchong', 'Japanese Restaurant'],
+    ];
+    await withApp({ places: { uo: rows, shin: rows } }, async (ctx) => {
+      const r = await ctx.app.geocode('uo shin');
+      assert.equal(r.filter((p) => /Uo Shin/.test(p.name)).length, 4);
+      assert.ok(/Japanese Restaurant/.test(r[0].sub), 'category shown');
+    });
+  });
+});

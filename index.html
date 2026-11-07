@@ -380,6 +380,187 @@ function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.na
   meS.raf=requestAnimationFrame(meFrame)}
 
 /* ---------- search ---------- */
+/* Place index: shards built from Foursquare Open Source Places (see scripts/build_fsq.py). */
+// Client-side search over sharded Malaysian place index.
+// Written as plain top-level declarations so it works both as a CommonJS
+// module and when pasted into a browser <script>.
+
+const FSQ_STOPWORDS = new Set([
+  'jalan', 'jln', 'lorong', 'lrg', 'restoran', 'restaurant', 'kedai', 'taman',
+  'sekolah', 'the', 'and', 'sdn', 'bhd', 'cafe', 'kafe', 'shop', 'store'
+]);
+
+// key -> { rows, items }; items are prepared (normalised) rows of that shard.
+const FSQ_PREPARED = new Map();
+
+// Unicode-normalise, strip combining accents, lowercase, split on non [a-z0-9].
+// No stopword removal.
+function normWords(str) {
+  return String(str == null ? '' : str)
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+// Normalised words minus words shorter than 2 chars and stopwords.
+function sigWords(str) {
+  return normWords(str).filter(w => w.length >= 2 && !FSQ_STOPWORDS.has(w));
+}
+
+// Shard key of a word: first 4 chars (whole word when shorter than 4).
+function keyOf(word) {
+  return word.length < 4 ? word : word.slice(0, 4);
+}
+
+// Great-circle distance in km between two {lat, lon} points.
+function haversineKm(a, b) {
+  const R = 6371;
+  const rad = d => d * Math.PI / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLon = rad(b.lon - a.lon);
+  const s = Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+// Choose the shard key to fetch for a typed query, or null.
+// Longest significant token wins; ties go to the key with fewer rows.
+// Tokens under 3 chars are ignored; 3-char tokens only match a key equal to them.
+function pickKey(query, keysIndex) {
+  if (!keysIndex || typeof keysIndex !== 'object') return null;
+  let best = null;
+  for (const tok of sigWords(query)) {
+    if (tok.length < 3) continue;
+    const k = keyOf(tok);
+    if (!Object.prototype.hasOwnProperty.call(keysIndex, k)) continue;
+    const count = Number(keysIndex[k]) || 0;
+    if (!best || tok.length > best.len || (tok.length === best.len && count < best.count)) {
+      best = { key: k, len: tok.length, count };
+    }
+  }
+  return best ? best.key : null;
+}
+
+// Normalise and cache a shard's rows. Cache is reused only while getShard
+// returns the same array object for the key.
+function fsqPrepare(key, rows) {
+  const hit = FSQ_PREPARED.get(key);
+  if (hit && hit.rows === rows) return hit.items;
+  const items = [];
+  for (const r of rows) {
+    if (!Array.isArray(r)) continue;
+    const lat = Number(r[1]);
+    const lon = Number(r[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const words = normWords(r[0]);
+    if (!words.length) continue;
+    items.push({ row: r, name: String(r[0]), words, norm: words.join(' '), lat, lon });
+  }
+  FSQ_PREPARED.set(key, { rows, items });
+  return items;
+}
+
+// Prefix-quality tier: 3 exact name, 2 name starts with query, 1 word-prefix match.
+function fsqQuality(norm, qNorm) {
+  if (norm === qNorm) return 3;
+  if (norm.startsWith(qNorm)) return 2;
+  return 1;
+}
+
+// Every query token must prefix-match some word of the name.
+function fsqMatches(words, qTokens) {
+  return qTokens.every(t => words.some(w => w.startsWith(t)));
+}
+
+// Search places. Returns up to opts.limit (default 12) results of the shape
+// {name, lat, lon, sub, cat, src:'fsq', dk} where dk is distance in metres or null.
+// Score = quality tier minus a distance penalty of at most 0.5*bias, so the
+// tier dominates and distance orders results within a tier. Never throws.
+async function searchPlaces(query, center, opts) {
+  opts = opts || {};
+  const limit = opts.limit > 0 ? opts.limit : 12;
+  const bias = Number.isFinite(opts.bias) ? opts.bias : 1;
+  if (typeof opts.getIndex !== 'function' || typeof opts.getShard !== 'function') return [];
+
+  let qTokens = normWords(query).filter(t => t.length >= 2);
+  const sq = qTokens.filter(t => !FSQ_STOPWORDS.has(t));
+  if (sq.length) qTokens = sq;
+  if (!qTokens.length) return [];
+
+  let index;
+  try {
+    index = await opts.getIndex();
+  } catch (e) {
+    return [];
+  }
+  const key = pickKey(String(query), index && index.keys);
+  if (!key) return [];
+
+  let rows;
+  try {
+    rows = await opts.getShard(key);
+  } catch (e) {
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+
+  const items = fsqPrepare(key, rows);
+  const qNorm = qTokens.join(' ');
+  const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
+
+  const scored = [];
+  for (const it of items) {
+    if (!fsqMatches(it.words, qTokens)) continue;
+    const q = fsqQuality(it.norm, qNorm);
+    let d = null;
+    let score = q;
+    if (hasCenter) {
+      d = haversineKm(center, it);
+      score = q - bias * 0.5 * d / (d + 100);
+    }
+    scored.push({ it, d, score });
+  }
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const da = a.d == null ? Infinity : a.d;
+    const db = b.d == null ? Infinity : b.d;
+    if (da !== db) return da < db ? -1 : 1;
+    return a.it.name < b.it.name ? -1 : a.it.name > b.it.name ? 1 : 0;
+  });
+
+  // Drop entries with the same normalised name within 150 m of a kept one.
+  const kept = [];
+  const byNorm = new Map();
+  for (const s of scored) {
+    if (kept.length >= limit) break;
+    const group = byNorm.get(s.it.norm) || [];
+    if (group.some(o => haversineKm(o, s.it) * 1000 < 150)) continue;
+    group.push(s.it);
+    byNorm.set(s.it.norm, group);
+    kept.push(s);
+  }
+
+  return kept.map(s => ({
+    name: s.it.name,
+    lat: s.it.lat,
+    lon: s.it.lon,
+    sub: s.it.row[3] != null ? s.it.row[3] : null,
+    cat: s.it.row[4] != null ? s.it.row[4] : null,
+    src: 'fsq',
+    dk: s.d == null ? null : Math.round(s.d * 1000)
+  }));
+}
+
+
+let placesIdxP=null;const placesShards=new Map();
+function getPlacesIdx(){if(!placesIdxP)placesIdxP=getJSON('data/places/index.json',{},8000).catch(()=>({keys:{}}));return placesIdxP}
+function getPlacesShard(k){if(!placesShards.has(k))placesShards.set(k,getJSON(`data/places/${k}.json`,{},10000).catch(()=>[]));return placesShards.get(k)}
+async function fsqSearch(q){const c=map.getCenter();const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15});
+  return r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · ')}))}
+
 const qO=$('#qOrigin'),qD=$('#qDest'),sugg=$('#sugg');
 let sTimer,sCtl;
 function dedupePlaces(list){const out=[];for(const p of list){const k=(p.name||'').trim().toLowerCase();
@@ -391,11 +572,11 @@ async function ttSearch(q,signal){if(!S.tomtom)return[];
   const r=await Promise.allSettled([ttOne(q,signal,'&idxSet=POI'),ttOne(q,signal,'')]);return r.flatMap(x=>x.status==='fulfilled'?x.value:[])}
 function parseCoordQuery(q){let m=q.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)||q.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)||q.match(/[?&](?:q|ll|query|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i)||q.match(/^\s*(-?\d{1,2}\.\d{2,})\s*[, ]\s*(-?\d{2,3}\.\d{2,})\s*$/);
   if(!m)return null;const la=+m[1],lo=+m[2];if(la<-11||la>8||lo<94||lo>120)return null;return{lat:la,lon:lo,name:`${la.toFixed(5)}, ${lo.toFixed(5)}`,sub:S.lang==='ms'?'Koordinat / pautan peta':'Coordinates / map link'}}
-async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal)]);
+async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b,f]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal),fsqSearch(q)]);
   if(signal&&signal.aborted)throw new DOMException('Aborted','AbortError');
-  if(a.status==='rejected'&&b.status==='rejected')throw a.reason;
+  if(a.status==='rejected'&&b.status==='rejected'&&f.status==='rejected')throw a.reason;
   const c=map.getCenter();
-  const l=dedupePlaces([...(b.status==='fulfilled'?b.value:[]),...(a.status==='fulfilled'?a.value:[])]);
+  const l=dedupePlaces([...(f.status==='fulfilled'?f.value:[]),...(b.status==='fulfilled'?b.value:[]),...(a.status==='fulfilled'?a.value:[])]);
   l.forEach(p=>p.dk=hav(c.lat,c.lng,p.lat,p.lon));
   const cnt={};l.forEach(p=>{const k=(p.name||'').toLowerCase();cnt[k]=(cnt[k]||0)+1});
   if(Object.values(cnt).some(n=>n>=3))l.sort((x,y)=>x.dk-y.dk);

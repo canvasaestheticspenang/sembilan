@@ -1,0 +1,48 @@
+name: Build places index
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Foursquare release date (YYYY-MM-DD). Leave empty for the newest release."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install DuckDB
+        run: pip install duckdb
+
+      - name: Build search shards
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: |
+          ARGS=(--out data/places)
+          if [ -n "$RELEASE" ]; then
+            ARGS+=(--release "$RELEASE")
+          fi
+          python scripts/build_fsq.py "${ARGS[@]}"
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data/places
+          if ! git diff --cached --quiet; then
+            git commit -m "Update places index"
+            git push
+          fi

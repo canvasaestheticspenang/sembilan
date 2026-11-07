@@ -218,6 +218,13 @@ async function bootApp(opts = {}) {
     if (url.includes('photon.komoot.io')) {
       return ok({ features: [{ geometry: { coordinates: [100.44, 5.36] }, properties: { name: 'Gurney Plaza', city: 'George Town' } }] });
     }
+    if (url.includes('data/places/index.json')) {
+      return cfg.places ? ok({ v: 1, keys: Object.fromEntries(Object.keys(cfg.places).map((k) => [k, cfg.places[k].length])) }) : notFound();
+    }
+    if (/data\/places\/[a-z0-9]+\.json/.test(url)) {
+      const k = url.match(/places\/([a-z0-9]+)\.json/)[1];
+      return cfg.places && cfg.places[k] ? ok(cfg.places[k]) : notFound();
+    }
     if (url.includes('data/plus-fares.json')) {
       return ok(JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'plus-fares.json'), 'utf8')));
     }
