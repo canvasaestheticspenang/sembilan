@@ -106,6 +106,16 @@ input{font:inherit;color:var(--fg)}
 #speed b{font-size:22px;display:block}
 #speed span{font-size:10px;color:var(--mut)}
 body.navigating #top,body.navigating #sheet{display:none}
+@media (max-height:520px){
+#navTop{left:8px;right:auto;width:min(46vw,330px);margin:0;padding:6px 10px;gap:8px;border-radius:12px;top:calc(6px + env(safe-area-inset-top))}
+#navTop .ico,body.rider #navTop .ico{width:40px;height:40px}
+#navTop .d,body.rider #navTop .d{font-size:20px}
+#navTop .t,body.rider #navTop .t{font-size:13px;margin-top:2px;-webkit-line-clamp:1}
+#then{top:calc(66px + env(safe-area-inset-top));left:8px;margin-left:0;padding:3px 10px;font-size:12px}
+#navBot{left:auto;right:8px;bottom:8px;width:min(44vw,300px);margin:0;border-radius:14px;padding:6px 10px}
+#navBot .eta{font-size:17px}
+#navBot .row{gap:3px}
+}
 body:not(.navigating) #navTop,body:not(.navigating) #navBot,body:not(.navigating) #speed,body:not(.navigating) #then,body:not(.navigating) #alert{display:none}
 
 /* modal */
@@ -713,7 +723,7 @@ const icoVol=on=>on?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" 
 let wake=null;async function keepAwake(){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(st.nav&&document.visibilityState==='visible')keepAwake()});
 /* Navigation camera: puts the position dot in the lower part of the screen so the road ahead is visible. */
-function followTo(lat,lon,z,anim){map.invalidateSize();const off=st.nav?Math.round(map.getSize().y*0.18):0;
+function followTo(lat,lon,z,anim){map.invalidateSize();let off=0;if(st.nav){const H=map.getSize().y,tb=Math.max(0,$('#navTop').getBoundingClientRect().bottom),bt=Math.min(H,$('#navBot').getBoundingClientRect().top);off=Math.round(Math.max(-H*.3,Math.min(H*.3,(tb+bt)/2-H/2)))}
   const c=map.unproject(map.project([lat,lon],z).subtract([0,off]),z);map.setView(c,z,{animate:!!anim})}
 async function startNav(){startWatch();
   if(!st.origin||!st.origin.gps){toast(T('startGps'));st.origin=null;qO.value='';if(!st.here){toast(T('needOrigin'));return}st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};await computeRoutes();if(!st.routes.length)return}
@@ -754,7 +764,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;
   const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);
   // voice prompts
   const fast=v>16;const far=fast?1500:400,mid=fast?500:150,now=Math.max(35,v*3.5);const txt=instr(s);const key=si+':';
-  if(s.maneuver.type==='arrive'){if(remD<35&&!n.arrived){n.arrived=true;logEv('arrive',{});say(T('arrive'));const d=st.dest;setTimeout(()=>{if(st.nav){endNav();if(S.rider)arrivalModal(d)}},4000)}}
+  if(s.maneuver.type==='arrive'){if(remD<35&&!n.arrived){n.arrived=true;logEv('arrive',{});say(T('arrive'));const d=st.dest;setTimeout(()=>{if(st.nav){endNav();if(S.rider&&S.family)arrivalModal(d)}},4000)}}
   else if(dist<=now){if(!n.spoken[key+'n']){n.spoken[key+'n']=n.spoken[key+'m']=n.spoken[key+'f']=1;say(txt)}}
   else if(dist<=mid+40){if(!n.spoken[key+'m']){n.spoken[key+'m']=n.spoken[key+'f']=1;say(`${S.rider?'':T('in')+' '}${fmtDist(dist)}, ${txt}`)}}
   else if(dist<=far+60&&dist>mid+150){if(!n.spoken[key+'f']){n.spoken[key+'f']=1;say(`${S.rider?'':T('in')+' '}${fmtDist(dist)}, ${txt}`)}}
