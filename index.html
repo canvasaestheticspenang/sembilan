@@ -395,7 +395,7 @@ function cartoonRestyle(){
     const fill=/motorway/.test(id)?c.mway:/trunk/.test(id)?c.trunk:/primary/.test(id)?c.prim:/secondary|tertiary/.test(id)?c.sec:c.minor;
     paint(id,'line-color',casing?c.casing:fill);
     paint(id,'line-opacity',1);
-    const w0=orig(id,()=>gm.getPaintProperty(id,'line-width'));if(w0!==undefined&&w0!==null)paint(id,'line-width',cartoonScale(w0,casing?sty.casK:sty.roadK));
+    const w0=orig(id,()=>gm.getPaintProperty(id,'line-width'));if(w0!==undefined&&w0!==null){const major=/motorway|trunk|primary|secondary|tertiary/.test(id);paint(id,'line-width',cartoonScale(w0,casing?(major?sty.casK:1+(sty.casK-1)*.4):sty.roadK))};
     lay(id,'line-cap',sty.cap);lay(id,'line-join',join)}
   cartoonFx(gm,th.fx)}
 function cartoonStop(){cartoonRun++;
