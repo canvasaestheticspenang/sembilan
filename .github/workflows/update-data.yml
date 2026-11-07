@@ -1,6 +1,6 @@
 name: Update map data
 
-# Rebuilds data/my-pois.json (petrol, R&R, tolls, speed cameras, shelters,
+# Rebuilds data (petrol, R&R, tolls, speed cameras, shelters,
 # no-motorcycle roads) from OpenStreetMap every week.
 on:
   schedule:
@@ -37,11 +37,11 @@ jobs:
           osmium export filtered.osm.pbf -f geojsonseq -o filtered.geojsonseq --overwrite
 
       - name: Build data file
-        run: python3 scripts/build_pois.py filtered.geojsonseq data/my-pois.json
+        run: python3 scripts/build_pois.py filtered.geojsonseq data
 
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/my-pois.json
+          git add -A data
           git diff --cached --quiet || (git commit -m "Update map data" && git push)

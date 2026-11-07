@@ -295,7 +295,11 @@ function setTraffic(){if(trafficL){map.removeLayer(trafficL);trafficL=null}if(S.
 let radarL=null;
 async function setRadar(){if(radarL){map.removeLayer(radarL);radarL=null}if(!S.radar)return;
   try{const j=await getJSON('https://api.rainviewer.com/public/weather-maps.json',{},10000);const fr=j.radar.past[j.radar.past.length-1];if(!S.radar)return;
-    radarL=L.tileLayer(`${j.host}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`,{maxNativeZoom:7,maxZoom:20,opacity:.6,zIndex:6,attribution:'Radar © RainViewer'}).addTo(map)}catch(e){toast(T('radarFail'))}}
+    radarL=L.tileLayer(`${j.host}${fr.path}/256/{z}/{x}/{y}/2/1_1.png`,{maxNativeZoom:7,maxZoom:20,opacity:.6,zIndex:6,bounds:MY_B,attribution:'Radar © RainViewer'}).addTo(map);radarScope()}catch(e){toast(T('radarFail'))}}
+/* Radar tiles are limited to Malaysia (plus margin) so the phone doesn't download the whole world; panning elsewhere lifts the limit. */
+const MY_B=L.latLngBounds([[0.5,99],[7.8,119.8]]);
+function radarScope(){if(!radarL)return;const out=!MY_B.contains(map.getCenter());if(out===!radarL.options.bounds)return;radarL.options.bounds=out?undefined:MY_B;radarL.redraw()}
+map.on('moveend',radarScope);
 setInterval(()=>{if(S.radar)setRadar()},600000);
 setTraffic();setRadar();
 
@@ -461,12 +465,24 @@ function finalize(list){const seen=new Set();const out=list.filter(p=>!seen.has(
   return res}
 /* Pre-built Malaysia data file (data/my-pois.json), refreshed weekly by GitHub Actions.
    Instant and doesn't depend on the busy public Overpass servers; Overpass stays as a fallback. */
-const CELL=0.02;let dbP=null;
-function loadDB(){if(dbP)return dbP;dbP=(async()=>{try{const j=await getJSON('data/my-pois.json',{},25000);if(!j||!Array.isArray(j.pois))throw 0;
-    const g=new Map(),ng=new Map(),add=(m,k,v)=>{let a=m.get(k);if(!a)m.set(k,a=[]);a.push(v)},ck=(la,lo)=>Math.floor(la/CELL)+':'+Math.floor(lo/CELL);
-    j.pois.forEach((p,i)=>add(g,ck(p[1],p[2]),i));
-    (j.nomoto||[]).forEach((w,i)=>{const c=w[1],ks=new Set();for(let k=0;k<c.length;k+=2)ks.add(ck(c[k],c[k+1]));ks.forEach(k=>add(ng,k,i))});
-    return{j,g,ng}}catch(e){return null}})();return dbP}
+const CELL=0.02;
+/* Data is split into 1x1 degree tiles (data/t/<lat>_<lon>.json); only the tiles a route crosses are downloaded.
+   Routes that leave Malaysia/Singapore/Brunei fall back to Overpass. */
+const MY_BOX=[0.8,99.5,7.5,119.4];
+const DB={j:{pois:[],nomoto:[],updated:''},g:new Map(),ng:new Map()},tileP=new Map();let manP=null;
+function loadMan(){if(manP)return manP;manP=getJSON('data/index.json',{},15000).then(j=>{if(!j||!j.tiles)throw 0;DB.j.updated=j.updated||'';return j}).catch(()=>{manP=null;return null});return manP}
+function addTile(t){const add=(m,k,v)=>{let a=m.get(k);if(!a)m.set(k,a=[]);a.push(v)},ck=(la,lo)=>Math.floor(la/CELL)+':'+Math.floor(lo/CELL);
+  const P=DB.j.pois;(t.pois||[]).forEach(p=>{add(DB.g,ck(p[1],p[2]),P.length);P.push(p)});
+  const seen=addTile.seen||(addTile.seen=new Set());
+  (t.nomoto||[]).forEach(w=>{const key=w[0]+'|'+w[1][0]+','+w[1][1];if(seen.has(key))return;seen.add(key);const i=DB.j.nomoto.length;DB.j.nomoto.push(w);const c=w[1],ks=new Set();for(let k=0;k<c.length;k+=2)ks.add(ck(c[k],c[k+1]));ks.forEach(k=>add(DB.ng,k,i))})}
+function loadTile(k){if(tileP.has(k))return tileP.get(k);const p=getJSON(`data/t/${k}.json`,{},20000).then(t=>{addTile(t);return true}).catch(()=>{tileP.delete(k);return false});tileP.set(k,p);return p}
+function tilesFor(r){const ks=new Set(),d=0.03;
+  for(const [la,lo] of r.coords){if(la<MY_BOX[0]||la>MY_BOX[2]||lo<MY_BOX[1]||lo>MY_BOX[3])return null;
+    for(const a of[la-d,la+d])for(const b of[lo-d,lo+d])ks.add(Math.floor(a)+'_'+Math.floor(b))}
+  return[...ks]}
+async function loadDB(r){const man=await loadMan();if(!man)return null;if(!r)return DB;
+  const keys=tilesFor(r);if(!keys)return null;
+  const ok=await Promise.all(keys.filter(k=>man.tiles[k]).map(loadTile));if(ok.some(x=>!x))return null;return DB}
 function mkPoi(type,lat,lon,name,extra,n,id){const ms=S.lang==='ms';let sub='';
   if(type==='fuel'){name=name||(ms?'Stesen minyak':'Petrol station');sub=extra||''}
   else if(type==='rr'){sub=extra==='rest_area'?(ms?'Hentian sebelah':'Lay-by'):'R&R';name=name||sub}
@@ -489,7 +505,7 @@ async function loadPois(i){const r=st.routes[i];if(!r||r._busy)return;r._busy=tr
   // query the route in ~25 km pieces so the free Overpass servers don't time out on long trips
   const CH=25000,chunks=[];for(let a=0;a<r.total;a+=CH)chunks.push([a,Math.min(r.total,a+CH)]);
   const alive=()=>st.routes.includes(r)||(st.nav&&st.nav.r===r);
-  const db=await loadDB();
+  const db=await loadDB(r);
   if(db){if(!alive()){r._busy=false;return}const d=poisFromDB(db,r);r.pois=finalize(d.pois);r.noMoto=S.rider?d.noMoto:null;r._busy=false;r.poisMore=false;r.poisPartial=false;
     if(!st.nav)renderSheet();if(st.routes[st.sel]===r||(st.nav&&st.nav.r===r))drawPois();return}
   const acc=[],noMoto=[];let ok=0;

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Build data/my-pois.json for Sembilan from an osmium GeoJSON-seq export.
+"""Build the regional POI data for Sembilan from an osmium GeoJSON-seq export.
 
-Usage: build_pois.py <input.geojsonseq> <output.json>
+Usage: build_pois.py <input.geojsonseq> <output dir, e.g. data>
 
-Output format (kept compact for fast loading on phones):
-  {"updated": "...", "pois": [[type, lat, lon, name, extra], ...],
+Writes <dir>/index.json (manifest) and <dir>/t/<lat>_<lon>.json, one file per 1x1 degree
+tile (floor of lat/lon), so a phone only downloads the tiles its route crosses.
+Tile format (kept compact for fast loading on phones):
+  {"pois": [[type, lat, lon, name, extra], ...],
    "nomoto": [[name, [lat, lon, lat, lon, ...]], ...]}
+A no-motorcycle way is written into every tile it touches.
   type: fuel | rr | cam | toll | shelter
   extra: fuel -> station name if different from brand; rr -> "services" or "rest_area";
          cam -> maxspeed; shelter -> "pt" for bus-stop shelters
 """
-import json, os, sys, datetime
+import glob, json, math, os, sys, datetime
 
 ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
          "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
@@ -86,18 +89,45 @@ def main(src, dst):
                 continue
             seen.add(key)
             pois.append([typ, lat, lon, name, extra])
-    out = {"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
-           "source": "OpenStreetMap contributors (ODbL), via Geofabrik",
-           "pois": pois, "nomoto": nomoto}
-    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
-    with open(dst, "w", encoding="utf-8") as fh:
-        json.dump(out, fh, ensure_ascii=False, separators=(",", ":"))
+    if len([p for p in pois if p[0] == "fuel"]) < 500:
+        sys.exit("Too few petrol stations - extract looks broken, not writing a bad file")
+    shard(pois, nomoto, dst)
     counts = {}
     for p in pois:
         counts[p[0]] = counts.get(p[0], 0) + 1
     print("pois:", counts, "nomoto ways:", len(nomoto))
-    if counts.get("fuel", 0) < 500:
-        sys.exit("Too few petrol stations - extract looks broken, not writing a bad file")
+
+
+def tile_key(lat, lon):
+    return "%d_%d" % (math.floor(lat), math.floor(lon))
+
+
+def shard(pois, nomoto, outdir):
+    tiles = {}
+
+    def tile(k):
+        return tiles.setdefault(k, {"pois": [], "nomoto": []})
+
+    for p in pois:
+        tile(tile_key(p[1], p[2]))["pois"].append(p)
+    for w in nomoto:
+        c = w[1]
+        for k in {tile_key(c[i], c[i + 1]) for i in range(0, len(c), 2)}:
+            tile(k)["nomoto"].append(w)
+    tdir = os.path.join(outdir, "t")
+    os.makedirs(tdir, exist_ok=True)
+    for f in glob.glob(os.path.join(tdir, "*.json")):
+        os.remove(f)
+    sizes = {}
+    for k, t in tiles.items():
+        with open(os.path.join(tdir, k + ".json"), "w", encoding="utf-8") as fh:
+            json.dump(t, fh, ensure_ascii=False, separators=(",", ":"))
+        sizes[k] = len(t["pois"]) + len(t["nomoto"])
+    idx = {"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
+           "source": "OpenStreetMap contributors (ODbL), via Geofabrik", "tiles": sizes}
+    with open(os.path.join(outdir, "index.json"), "w", encoding="utf-8") as fh:
+        json.dump(idx, fh, separators=(",", ":"))
+    print("tiles:", len(tiles))
 
 
 if __name__ == "__main__":

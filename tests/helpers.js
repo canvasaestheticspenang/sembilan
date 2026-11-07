@@ -14,7 +14,7 @@ const LEAFLET_JS = path.join(REPO, 'node_modules', 'leaflet', 'dist', 'leaflet.j
 
 const DEFAULT_START = { lat: 5.3, lon: 100.4 };
 
-// Canned data for the Malaysian POI file (data/my-pois.json), as the app expects it.
+// Canned data for the Malaysian POI file (data/index.json + data/t/*.json tiles), as the app expects it.
 const DEFAULT_DB = {
   updated: '2026-11-01',
   pois: [
@@ -191,9 +191,12 @@ async function bootApp(opts = {}) {
     if (url.includes('photon.komoot.io')) {
       return ok({ features: [{ geometry: { coordinates: [100.44, 5.36] }, properties: { name: 'Gurney Plaza', city: 'George Town' } }] });
     }
-    if (url.includes('my-pois.json')) {
+    if (url.includes('data/index.json')) {
+      return cfg.withDB ? ok({ updated: DEFAULT_DB.updated, tiles: { '5_100': 5 } }) : notFound();
+    }
+    if (url.includes('data/t/')) {
       dbFetches++;
-      return cfg.withDB ? ok(DEFAULT_DB) : notFound();
+      return cfg.withDB && url.includes('5_100') ? ok({ pois: DEFAULT_DB.pois, nomoto: DEFAULT_DB.nomoto }) : notFound();
     }
     unexpected.push(url);
     throw new TypeError(`test: blocked network request to ${url}`);
