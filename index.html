@@ -300,11 +300,11 @@ const ESRI='https://server.arcgisonline.com/ArcGIS/rest/services/';
 const TILE_SRC=[
   ()=>S.dark?{url:ESRI+'Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',ref:ESRI+'Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',max:16,attr:'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors'}
            :{url:ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}',max:19,attr:'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors'},
-  ()=>({url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',max:19,attr:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'})];
+  ()=>({url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',max:19,retina:true,attr:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'})];
 function setBase(){if(baseL)map.removeLayer(baseL);if(refL){map.removeLayer(refL);refL=null}
   const t=TILE_SRC[tileSrc]();
-  baseL=L.tileLayer(t.url,{maxZoom:20,maxNativeZoom:t.max,detectRetina:true,attribution:t.attr}).addTo(map);
-  if(t.ref)refL=L.tileLayer(t.ref,{maxZoom:20,maxNativeZoom:t.max,detectRetina:true,zIndex:4,pane:'overlayPane'}).addTo(map);
+  baseL=L.tileLayer(t.url,{maxZoom:20,maxNativeZoom:t.max,detectRetina:!!t.retina,attribution:t.attr}).addTo(map);
+  if(t.ref)refL=L.tileLayer(t.ref,{maxZoom:20,maxNativeZoom:t.max,detectRetina:false,zIndex:4,pane:'overlayPane'}).addTo(map);
   baseL.on('tileload',()=>{tileOk++;document.getElementById('boot').classList.add('ok')});
   baseL.on('tileerror',()=>{tileErr++;if(tileOk)return;
     if(tileErr>=6&&tileSrc<TILE_SRC.length-1){tileSrc++;tileErr=0;setBase()}
