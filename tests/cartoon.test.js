@@ -120,6 +120,7 @@ describe('cartoon map (experimental)', () => {
       ctx.document.querySelector('[data-mt="vintage"]').click();
       assert.equal(ctx.app.S.mapTheme, 'vintage');
       assert.equal(ctx.app.store.get('mapTheme', null), 'vintage');
+      assert.equal(ctx.document.documentElement.style.getPropertyValue('--av-ring'), ctx.app.MAP_THEMES.vintage.avatar.ring, 'avatar follows the theme');
       const bg = gm.painted.find((x) => x[0] === 'background');
       assert.equal(bg && bg[2], ctx.app.cartoonPal().land);
     });
