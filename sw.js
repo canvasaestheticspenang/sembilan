@@ -2,7 +2,7 @@
 // map tiles available offline. Routing, search, Overpass, weather and radar
 // requests are never intercepted; POST and other non-GET requests are never cached.
 
-const VERSION = 's9-v2';
+const VERSION = 's9-v3';
 const PREFIX = 'sembilan-';
 const SHELL_CACHE = `${PREFIX}${VERSION}-shell`;
 const DATA_CACHE = `${PREFIX}${VERSION}-data`;
@@ -84,7 +84,7 @@ self.addEventListener('fetch', (event) => {
 async function networkFirst(req, cacheName, fallbackUrl) {
   const cache = await caches.open(cacheName);
   try {
-    const res = await fetch(req);
+    const res = await fetch(req, { cache: 'no-cache' }); // revalidate: GitHub Pages caches pages for 10 min
     if (res.ok) cache.put(req.url, res.clone()).catch(() => {});
     return res;
   } catch (err) {
