@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - "scripts/build_pois.py"
+      - "scripts/build_cameras.py"
       - ".github/workflows/update-data.yml"
 
 permissions:
@@ -38,6 +39,12 @@ jobs:
 
       - name: Build data file
         run: python3 scripts/build_pois.py filtered.geojsonseq data
+
+      - name: Build speed-camera file (Overpass API)
+        # Best effort: if Overpass is busy or returns too few cameras the script
+        # exits non-zero, keeps the previous data/cameras.json and the rest still commits.
+        continue-on-error: true
+        run: python3 scripts/build_cameras.py data/cameras.json
 
       - name: Commit if changed
         run: |

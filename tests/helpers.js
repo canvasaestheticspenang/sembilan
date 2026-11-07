@@ -135,6 +135,7 @@ const notFound = () => ({ ok: false, status: 404, json: async () => { throw new 
  *   rainAt         fraction (0..1) of the route where rain starts; > 1 means dry (default 0.8)
  *   route          'demo' (default, 11 km with a turn) or 'long' (120 km straight)
  *   overpass       'fixed' (default) or 'bbox' (one fuel stop and one camera per query box)
+ *   cameras        body served for data/cameras.json (default: 404, i.e. no camera data)
  *   start          {lat, lon} of the GPS fix before the test starts (default 5.3, 100.4)
  *   storage        {key: value} saved in localStorage before the app starts, under the s9_ prefix
  *
@@ -145,7 +146,9 @@ async function bootApp(opts = {}) {
     rider: false, withDB: true, overpassFails: false, rainAt: 0.8,
     route: 'demo', overpass: 'fixed', start: DEFAULT_START, ...opts, storage: { cartoon: false, ...(opts.storage || {}) },
   };
-  const { page, app } = readAppParts();
+  const parts = readAppParts();
+  const app = parts.app;
+  const page = typeof cfg.transformPage === 'function' ? cfg.transformPage(parts.page) : parts.page;
 
   const said = [];
   const calls = [];
@@ -153,6 +156,7 @@ async function bootApp(opts = {}) {
   const errors = [];
   let overpassCount = 0;
   let dbFetches = 0;
+  let cameraFetches = 0;
   const ttCalls = [];
   const valBodies = [];
 
@@ -225,6 +229,10 @@ async function bootApp(opts = {}) {
       const k = url.match(/places\/([a-z0-9]+)\.json/)[1];
       return cfg.places && cfg.places[k] ? ok(cfg.places[k]) : notFound();
     }
+    if (url.includes('data/cameras.json')) {
+      cameraFetches++;
+      return cfg.cameras ? ok(cfg.cameras) : notFound();
+    }
     if (url.includes('data/plus-fares.json')) {
       return ok(JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'plus-fares.json'), 'utf8')));
     }
@@ -251,6 +259,8 @@ async function bootApp(opts = {}) {
   w.speechSynthesis = { getVoices: () => [], cancel() {}, speak(u) { said.push(u.text); } };
   w.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
 
+  if (typeof cfg.beforeBoot === 'function') cfg.beforeBoot(w); // e.g. inject a fake Capacitor
+
   if (cfg.rider) w.localStorage.setItem('s9_rider', 'true');
   w.localStorage.setItem('s9_tomtom', JSON.stringify('')); // tests must not use the built-in key
   for (const [k, v] of Object.entries(cfg.storage)) w.localStorage.setItem(`s9_${k}`, JSON.stringify(v));
@@ -260,7 +270,7 @@ async function bootApp(opts = {}) {
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,MAP_THEMES,cartoonPal,meS,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer}};`);
+  w.eval(`${app}\n;window.__app={native,PLACES_BASE,REMOTE_DATA_BASE,map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,MAP_THEMES,cartoonPal,meS,SC,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer}};\n;window.__app.rel=relApi();`);
   w.__said = said;
 
   const ctx = {
@@ -275,9 +285,11 @@ async function bootApp(opts = {}) {
     waitFor,
     get overpassCalls() { return overpassCount; },
     get dbFetches() { return dbFetches; },
+    get cameraFetches() { return cameraFetches; },
     ttCalls,
     valBodies,
     setPos(lat, lon, speed = 10) {
+      if (!w.__pos) return; // native boot: no browser GPS
       w.__pos({ coords: { latitude: lat, longitude: lon, accuracy: 10, speed, heading: 0 }, timestamp: Date.now() });
     },
     // Types a destination, picks the first suggestion and waits for the route cards.

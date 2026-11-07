@@ -1,0 +1,16 @@
+{
+  "version": 0.6,
+  "generator": "SYNTHETIC TEST FIXTURE - not real Overpass output, not real camera locations",
+  "osm3s": { "timestamp_osm_base": "2026-11-01T00:00:00Z" },
+  "elements": [
+    { "type": "node", "id": 9000000001, "lat": 5.30100, "lon": 100.40000, "tags": { "highway": "speed_camera", "maxspeed": "60" } },
+    { "type": "node", "id": 9000000002, "lat": 5.30200, "lon": 100.40100, "tags": { "highway": "speed_camera", "maxspeed": "90 km/h", "direction": "270", "name": "SYNTHETIC AES" } },
+    { "type": "node", "id": 9000000003, "lat": 5.30300, "lon": 100.40200, "tags": { "highway": "speed_camera", "direction": "NE" } },
+    { "type": "node", "id": 9000000004, "lat": 5.30400, "lon": 100.40300, "tags": { "enforcement": "maxspeed", "maxspeed": "40 mph", "direction": "forward" } },
+    { "type": "node", "id": 9000000005, "lat": 5.301000004, "lon": 100.400000004, "tags": { "highway": "speed_camera", "maxspeed": "60" } },
+    { "type": "node", "id": 9000000006, "lat": 1.35, "lon": 103.82, "tags": { "highway": "speed_camera" } },
+    { "type": "node", "id": 9000000007, "lat": 51.5, "lon": -0.12, "tags": { "highway": "speed_camera" } },
+    { "type": "way", "id": 9000000008, "nodes": [9000000001], "tags": { "highway": "speed_camera" } },
+    { "type": "node", "id": 9000000009, "lat": 5.30500, "lon": 100.40400, "tags": { "highway": "speed_camera", "maxspeed": "signals" } }
+  ]
+}

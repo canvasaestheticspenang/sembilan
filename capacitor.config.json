@@ -1,0 +1,20 @@
+{
+  "appId": "com.canvasaesthetics.sembilan",
+  "appName": "Sembilan",
+  "webDir": "www",
+  "backgroundColor": "#ffffff",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "useLegacyBridge": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "launchAutoHide": true,
+      "backgroundColor": "#0f766e",
+      "showSpinner": false
+    }
+  }
+}
