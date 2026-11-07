@@ -242,6 +242,7 @@ async function bootApp(opts = {}) {
   w.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
 
   if (cfg.rider) w.localStorage.setItem('s9_rider', 'true');
+  w.localStorage.setItem('s9_tomtom', JSON.stringify('')); // tests must not use the built-in key
   for (const [k, v] of Object.entries(cfg.storage)) w.localStorage.setItem(`s9_${k}`, JSON.stringify(v));
 
   // Leaflet comes from node_modules instead of the CDN <script> that was stripped.

@@ -208,8 +208,8 @@ body.rider #btnShare{display:none}
 if(!window.L){document.getElementById('bootMsg').innerHTML='<b>Peta tidak dapat dimuatkan — tiada sambungan internet atau pratonton menyekatnya.</b><br>Map library blocked — no internet, or this preview blocks it.';throw new Error('Leaflet not loaded')}
 /* ---------- storage & settings ---------- */
 const store={get(k,d){try{const v=localStorage.getItem('s9_'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('s9_'+k,JSON.stringify(v))}catch(e){}}};
-const TT_DEFAULT=''; // optional built-in TomTom key (restrict it to this site's domain in the TomTom dashboard)
-const S={lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:store.get('tomtom','')||TT_DEFAULT,traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false)};
+const TT_DEFAULT='RCOJ7rhUpYA15gZDzjan9cXZHyjMXqUS'; // optional built-in TomTom key (restrict it to this site's domain in the TomTom dashboard)
+const S={lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:(()=>{const v=store.get('tomtom',null);return v===null?TT_DEFAULT:v})(),traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false)};
 const save=k=>store.set(k,S[k]);
 const APP_VER='2026.11.07';
 const REPORT_TO='';// owner's WhatsApp number e.g. 60123456789; empty = tester picks a contact
@@ -792,7 +792,7 @@ $('#btnLayers').onclick=()=>{modal(`<h3>${T('layers')}</h3>
   <div class="tog"><span>${T('thLabel')}</span><div class="seg" style="width:240px">${['auto','light','dark'].map(k=>`<button data-th="${k}" class="${S.theme===k?'on':''}">${T('th'+k[0].toUpperCase()+k.slice(1))}</button>`).join('')}</div></div>
   <div class="tog"><span>${T('radar')}</span><button class="sw ${S.radar?'on':''}" id="mRadar"></button></div>
   <div class="tog"><span>${T('traffic')}</span><button class="sw ${S.traffic?'on':''}" id="mTraffic"></button></div>
-  <div class="muted">${T('ttKey')}</div><input class="field" id="mKey" value="${esc(S.tomtom)}" placeholder="API key">
+  <div class="muted">${T('ttKey')}</div><input class="field" id="mKey" value="${esc(S.tomtom===TT_DEFAULT?'':S.tomtom)}" placeholder="${S.tomtom===TT_DEFAULT?'✓ TomTom built in':'API key'}">
   <div style="margin-top:14px;text-align:right"><button class="btn s" data-close>${T('close')}</button></div>`);
   document.querySelectorAll('[data-th]').forEach(b=>b.onclick=()=>{S.theme=b.dataset.th;save('theme');applyTheme();document.querySelectorAll('[data-th]').forEach(x=>x.classList.toggle('on',x===b))});
   $('#mRadar').onclick=e=>{S.radar=!S.radar;save('radar');e.target.classList.toggle('on',S.radar);setRadar()};
