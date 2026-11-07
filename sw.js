@@ -2,7 +2,7 @@
 // viewed map tiles (raster Esri/OSM and OpenFreeMap vector tiles, ~300, LRU) available offline. Routing, search, Overpass, weather and radar
 // requests are never intercepted; POST and other non-GET requests are never cached.
 
-const VERSION = 's9-v25';
+const VERSION = 's9-v26';
 const PREFIX = 'sembilan-';
 const SHELL_CACHE = `${PREFIX}${VERSION}-shell`;
 const DATA_CACHE = `${PREFIX}${VERSION}-data`;
