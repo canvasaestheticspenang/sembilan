@@ -119,6 +119,9 @@ body.navigating #top,body.navigating #sheet{display:none}
 #navBot .eta{font-size:17px}
 #navBot .row{gap:3px}
 }
+body.rot #navTop,body.rot #navBot,body.rot #speed,body.rot #then,body.rot #alert,body.rot #camAlert,body.rot #fabs,body.rot #map{opacity:0!important;transition:opacity .14s ease!important}
+body.rotend #navTop,body.rotend #navBot,body.rotend #speed,body.rotend #then,body.rotend #alert,body.rotend #camAlert,body.rotend #map{transition:opacity .35s ease}
+body.rotend #fabs{transition:opacity .35s ease,bottom .2s}
 body:not(.navigating) #navTop,body:not(.navigating) #navBot,body:not(.navigating) #speed,body:not(.navigating) #then,body:not(.navigating) #alert{display:none}
 
 /* modal */
@@ -1401,6 +1404,17 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
 function applyLang(){document.documentElement.lang=S.lang;qO.placeholder=T('myLoc');qD.placeholder=T('where');$('#speed span').textContent=S.lang==='ms'?'km/j':'km/h';$('#btnEnd').textContent=T('end');
   if(st.origin&&st.origin.gps)st.origin.name=T('myLoc');renderSheet()}
 window.addEventListener('resize',positionFabs);
+/* Orientation change: the layout swaps in one frame (panels move, map re-centres). Fade everything out, re-layout while hidden, fade back in. */
+(()=>{let t=0,end=0,land=isLand(),w=innerWidth;
+  try{L.DomEvent.off(window,'resize',map._onResize,map)}catch(e){}
+  const settle=()=>{map.invalidateSize({pan:false});_offT=0;
+    if(st.nav&&st.follow&&st.here)followTo(st.here.lat,st.here.lon,map.getZoom(),false);else if(viewOn)applyView();
+    setOrigin();positionFabs()};
+  window.addEventListener('resize',()=>{const l=isLand(),dw=Math.abs(innerWidth-w);
+    clearTimeout(t);
+    if(l===land&&dw<120){t=setTimeout(()=>{w=innerWidth;settle()},60);return}
+    land=l;w=innerWidth;const b=document.body;clearTimeout(end);b.classList.remove('rotend');b.classList.add('rot');
+    t=setTimeout(()=>{settle();requestAnimationFrame(()=>requestAnimationFrame(()=>{b.classList.remove('rot');b.classList.add('rotend');end=setTimeout(()=>b.classList.remove('rotend'),400)}))},160)})})();
 
 /* ===== RELIABILITY ===== (offline resume, reroute guard, error capture; hooks: startNav, endNav, reroute, navTick, buildReport) */
 const REL={MAX_AGE:3*3600e3,NEAR_M:1500,SAVE_MS:5000,RE_MIN:8000,MAX_ACC:60,OFF_N:3,BACKOFF:[8000,16000,30000,60000,120000]};
