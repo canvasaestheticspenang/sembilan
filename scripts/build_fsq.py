@@ -66,26 +66,24 @@ def normalise_words(name: str) -> list[str]:
     return [w for w in re.split(r"[^a-z0-9]+", s) if w]
 
 
-MAX_KEY_WORDS = 3  # only the first N searchable words of a name get a shard entry (keeps the index small)
+MAX_KEY_WORDS = 2  # only the first N searchable words of a name get a shard entry (keeps the index small)
 DROP_CATS = frozenset([
     "College Classroom", "College Academic Building", "College Lab", "College Residence Hall",
     "College Student Center", "Student Center", "Structure", "Road", "Housing Development",
-    "Miscellaneous Store", "Food Truck", "Home (private)", "Residential Building",
+    "Miscellaneous Store", "Food Truck", "Office", "Factory", "Parking", "Coworking Space", "Warehouse or Wholesale Store", "Building", "Corporate Office", "Business Service", "Construction", "Industrial Estate", "Home (private)", "Residential Building",
 ])
 CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 
 
 def keys_for(words: list[str]) -> set[str]:
-    keys = set()
-    n = 0
-    for w in words:
+    """Shard keys for a name: its MAX_KEY_WORDS longest searchable words (the most distinctive ones)."""
+    cand = []
+    for i, w in enumerate(words):
         if len(w) < 2 or w in STOPWORDS:
             continue
-        keys.add(w[:4] if len(w) >= 4 else w)
-        n += 1
-        if n >= MAX_KEY_WORDS:
-            break
-    return keys
+        cand.append((-len(w), i, w))
+    cand.sort()
+    return {w[:4] if len(w) >= 4 else w for _, _, w in cand[:MAX_KEY_WORDS]}
 
 
 def dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
