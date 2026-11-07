@@ -122,13 +122,14 @@ const notFound = () => ({ ok: false, status: 404, json: async () => { throw new 
  *   route          'demo' (default, 11 km with a turn) or 'long' (120 km straight)
  *   overpass       'fixed' (default) or 'bbox' (one fuel stop and one camera per query box)
  *   start          {lat, lon} of the GPS fix before the test starts (default 5.3, 100.4)
+ *   storage        {key: value} saved in localStorage before the app starts, under the s9_ prefix
  *
  * Returns a context object. Call ctx.close() when done (the app has timers).
  */
 async function bootApp(opts = {}) {
   const cfg = {
     rider: false, withDB: true, overpassFails: false, rainAt: 0.8,
-    route: 'demo', overpass: 'fixed', start: DEFAULT_START, ...opts,
+    route: 'demo', overpass: 'fixed', start: DEFAULT_START, storage: {}, ...opts,
   };
   const { page, app } = readAppParts();
 
@@ -208,13 +209,14 @@ async function bootApp(opts = {}) {
   w.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
 
   if (cfg.rider) w.localStorage.setItem('s9_rider', 'true');
+  for (const [k, v] of Object.entries(cfg.storage)) w.localStorage.setItem(`s9_${k}`, JSON.stringify(v));
 
   // Leaflet comes from node_modules instead of the CDN <script> that was stripped.
   w.eval(fs.readFileSync(LEAFLET_JS, 'utf8'));
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store};`);
+  w.eval(`${app}\n;window.__app={S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase};`);
   w.__said = said;
 
   const ctx = {
