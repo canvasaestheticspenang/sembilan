@@ -361,3 +361,74 @@ describe('place index search', () => {
     });
   });
 });
+
+describe('avatar and route look', () => {
+  const FACE = 'data:image/jpeg;base64,/9j/4AAQ';
+  it('choosing an avatar persists in S and swaps the marker content', { timeout: TIMEOUT }, async () => {
+    await withApp({ withDB: false }, async (ctx) => {
+      ctx.setPos(5.3, 100.4);
+      const A = ctx.app;
+      await waitFor(() => A.meS.el, { what: 'position marker' });
+      assert.equal(ctx.document.querySelector('.me-av').innerHTML, '', 'arrow by default has no avatar art');
+      A.setAvatar('dog');
+      assert.equal(A.S.avatar, 'dog');
+      assert.equal(JSON.parse(ctx.window.localStorage.getItem('s9_avatar')), 'dog');
+      assert.ok(ctx.document.querySelector('.me-av svg'), 'dog drawing is in the marker');
+      assert.equal(A.meS.el.av.style.display, 'block');
+      A.setAvatar('cat');
+      assert.notEqual(A.meS.el.av.innerHTML, '');
+      assert.ok(A.meS.el.av.isConnected, 'bindings follow the rebuilt marker');
+      A.setAvatar('arrow');
+      assert.equal(A.meS.el.av.style.display, 'none');
+    });
+  });
+
+  it('face helpers crop to a centered square and only store image data URLs', { timeout: TIMEOUT }, async () => {
+    await withApp({ withDB: false }, async (ctx) => {
+      const A = ctx.app;
+      assert.deepEqual({ ...A.faceCrop(400, 200) }, { sx: 100, sy: 0, s: 200 });
+      assert.deepEqual({ ...A.faceCrop(100, 300) }, { sx: 0, sy: 100, s: 100 });
+      assert.equal(A.storeFace('https://evil.example/x.png'), false);
+      assert.equal(A.S.avatarImg, '');
+      ctx.setPos(5.3, 100.4);
+      await waitFor(() => A.meS.el, { what: 'position marker' });
+      assert.equal(A.storeFace(FACE), true);
+      assert.equal(A.S.avatar, 'face');
+      assert.equal(JSON.parse(ctx.window.localStorage.getItem('s9_avatarImg')), FACE);
+      assert.equal(ctx.document.querySelector('.me-av img').getAttribute('src'), FACE);
+    });
+  });
+
+  it('route colour applies to the drawn route and survives navigation with a greyed done part', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false, withDB: false }, async (ctx) => {
+      await ctx.search('gurney');
+      const A = ctx.app;
+      const colours = () => A.routeLayer.getLayers().map((l) => l.options.color);
+      assert.ok(colours().includes('#14b8a6'), 'default teal');
+      A.setRouteColor('purple');
+      assert.equal(A.S.routeColor, 'purple');
+      assert.equal(JSON.parse(ctx.window.localStorage.getItem('s9_routeColor')), 'purple');
+      assert.ok(colours().includes('#a855f7') && !colours().includes('#14b8a6'));
+      assert.ok(A.routeLayer.getLayers().filter((l) => l.options.weight >= 12).length >= 2, 'glow and casing are thicker than the line');
+      ctx.document.querySelector('#btnStart').click();
+      assert.ok(A.st.nav.done, 'done polyline exists');
+      assert.equal(A.st.nav.done.options.color, '#94a3b8');
+      assert.equal(A.st.nav.line.options.color, '#a855f7');
+      A.setRouteColor('orange');
+      assert.equal(A.st.nav.line.options.color, '#f97316');
+      assert.equal(A.st.nav.done.options.color, '#94a3b8');
+    });
+  });
+
+  it('the picker is reachable from settings', { timeout: TIMEOUT }, async () => {
+    await withApp({ withDB: false }, async (ctx) => {
+      ctx.document.querySelector('#btnSettings').click();
+      ctx.document.querySelector('#mLook').click();
+      ctx.document.querySelector('[data-av="cat"]').click();
+      ctx.document.querySelector('[data-rc="blue"]').click();
+      assert.equal(ctx.app.S.avatar, 'cat');
+      assert.equal(ctx.app.S.routeColor, 'blue');
+      assert.ok(ctx.document.querySelector('[data-av="cat"]').classList.contains('on'));
+    });
+  });
+});
