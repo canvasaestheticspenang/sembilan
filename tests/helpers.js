@@ -145,7 +145,9 @@ async function bootApp(opts = {}) {
     rider: false, withDB: true, overpassFails: false, rainAt: 0.8,
     route: 'demo', overpass: 'fixed', start: DEFAULT_START, ...opts, storage: { cartoon: false, ...(opts.storage || {}) },
   };
-  const { page, app } = readAppParts();
+  const parts = readAppParts();
+  const app = parts.app;
+  const page = typeof cfg.transformPage === 'function' ? cfg.transformPage(parts.page) : parts.page;
 
   const said = [];
   const calls = [];
@@ -251,6 +253,8 @@ async function bootApp(opts = {}) {
   w.speechSynthesis = { getVoices: () => [], cancel() {}, speak(u) { said.push(u.text); } };
   w.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
 
+  if (typeof cfg.beforeBoot === 'function') cfg.beforeBoot(w); // e.g. inject a fake Capacitor
+
   if (cfg.rider) w.localStorage.setItem('s9_rider', 'true');
   w.localStorage.setItem('s9_tomtom', JSON.stringify('')); // tests must not use the built-in key
   for (const [k, v] of Object.entries(cfg.storage)) w.localStorage.setItem(`s9_${k}`, JSON.stringify(v));
@@ -260,7 +264,7 @@ async function bootApp(opts = {}) {
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,MAP_THEMES,cartoonPal,meS,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer}};`);
+  w.eval(`${app}\n;window.__app={native,PLACES_BASE,REMOTE_DATA_BASE,map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,MAP_THEMES,cartoonPal,meS,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer}};`);
   w.__said = said;
 
   const ctx = {
@@ -278,6 +282,7 @@ async function bootApp(opts = {}) {
     ttCalls,
     valBodies,
     setPos(lat, lon, speed = 10) {
+      if (!w.__pos) return; // native boot: no browser GPS
       w.__pos({ coords: { latitude: lat, longitude: lon, accuracy: 10, speed, heading: 0 }, timestamp: Date.now() });
     },
     // Types a destination, picks the first suggestion and waits for the route cards.

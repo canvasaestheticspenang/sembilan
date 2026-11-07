@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Sembilan">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="sembilan-places" content="remote">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -467,9 +468,61 @@ function applyTheme(){const d=themeDark();if(d!==S.dark){S.dark=d;setBase()}}
 S.dark=themeDark();setBase();
 setInterval(applyTheme,300000);
 
+/* ===== NATIVE BRIDGE ===== */
+/* Capacitor wrapper (iOS/Android). On the web every call below falls back to the
+   browser API the app always used, so the PWA behaves exactly as before. */
+const REMOTE_DATA_BASE='https://canvasaestheticspenang.github.io/sembilan/data/';
+const native=(()=>{
+  const cap=()=>window.Capacitor;
+  const isNative=!!(cap()&&typeof cap().isNativePlatform==='function'&&cap().isNativePlatform());
+  const plug=n=>{const c=cap();return isNative&&c&&c.Plugins?c.Plugins[n]:null};
+  const wmap=new Map();let wseq=0;
+  const STR={ms:{t:'Sembilan sedang menjejak lokasi',m:'Navigasi aktif'},en:{t:'Sembilan is using your location',m:'Navigation is active'}};
+  const conv=l=>({coords:{latitude:l.latitude,longitude:l.longitude,accuracy:l.accuracy,speed:l.speed==null||l.speed<0?null:l.speed,heading:l.bearing==null?null:l.bearing},timestamp:l.time||Date.now()});
+  return {
+    isNative,
+    hasGeo(){return !!(plug('BackgroundGeolocation')||navigator.geolocation)},
+    /* Returns a handle at once; pass it to clearWatch. opts.lang picks the notification language. */
+    watchPosition(cb,err,opts){
+      opts=opts||{};const bg=plug('BackgroundGeolocation');
+      if(!bg)return navigator.geolocation.watchPosition(cb,err,opts.web||{enableHighAccuracy:true,maximumAge:2000,timeout:25000});
+      const h='n'+(++wseq),s=STR[opts.lang]||STR.en;const w={id:null,dead:false};wmap.set(h,w);
+      Promise.resolve(bg.addWatcher({backgroundTitle:s.t,backgroundMessage:s.m,requestPermissions:true,stale:false,distanceFilter:0},(l,e)=>{
+        if(e){if(err)err({code:e.code==='NOT_AUTHORIZED'?1:2,message:e.message||String(e.code||'')});return}
+        if(l)cb(conv(l))})).then(id=>{if(w.dead)bg.removeWatcher({id});else w.id=id},e=>{if(err)err({code:2,message:String(e&&e.message||e)})});
+      return h;
+    },
+    clearWatch(h){
+      if(typeof h==='string'&&h[0]==='n'){const w=wmap.get(h);if(!w)return;wmap.delete(h);w.dead=true;const bg=plug('BackgroundGeolocation');if(w.id!=null&&bg)bg.removeWatcher({id:w.id});return}
+      if(navigator.geolocation)navigator.geolocation.clearWatch(h);
+    },
+    /* lang is a BCP-47 tag such as ms-MY or en-GB. */
+    speak(text,lang,o){
+      o=o||{};const tts=plug('TextToSpeech');
+      if(tts){try{const p=tts.speak({text:String(text),lang,rate:o.rate||1,pitch:1,volume:1,category:'playback',queueStrategy:0});if(p&&p.catch)p.catch(()=>{})}catch(e){}return true}
+      if(!('speechSynthesis' in window))return false;
+      try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang=lang;if(o.rate)u.rate=o.rate;speechSynthesis.speak(u);return true}catch(e){return false}
+    },
+    stopSpeech(){
+      const tts=plug('TextToSpeech');
+      if(tts){try{const p=tts.stop();if(p&&p.catch)p.catch(()=>{})}catch(e){}return}
+      if('speechSynthesis' in window)speechSynthesis.cancel();
+    },
+    /* Resolves to an object with release(), as the Screen Wake Lock API does. */
+    async keepAwake(){
+      const ka=plug('KeepAwake');
+      if(ka){try{await ka.keepAwake()}catch(e){}return {release(){return ka.allowSleep()}}}
+      return navigator.wakeLock?.request('screen');
+    }
+  };
+})();
+/* Native builds fetch the big places shards from the web unless the build bundled them (build-www --with-places). */
+const PLACES_BASE=(()=>{const m=document.querySelector('meta[name="sembilan-places"]');return native.isNative&&!(m&&m.content==='local')?REMOTE_DATA_BASE+'places/':'data/places/'})();
+/* ===== /NATIVE BRIDGE ===== */
+
 /* ---------- geolocation ---------- */
 let watchId=null;
-function startWatch(){if(!navigator.geolocation){toast(T('noGeo'));return}if(watchId!=null)return;watchId=navigator.geolocation.watchPosition(onPos,e=>{if(!st.here)toast(T('noGeo'))},{enableHighAccuracy:true,maximumAge:2000,timeout:25000})}
+function startWatch(){if(!native.hasGeo()){toast(T('noGeo'));return}if(watchId!=null)return;watchId=native.watchPosition(onPos,e=>{if(!st.here)toast(T('noGeo'))},{lang:S.lang,web:{enableHighAccuracy:true,maximumAge:2000,timeout:25000}})}
 function onPos(p){const c=p.coords,first=!st.here;st.here={lat:c.latitude,lon:c.longitude,acc:c.accuracy||30,speed:c.speed,heading:c.heading,t:p.timestamp};
   if(!st.origin||st.origin.gps)st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};
   if(first)applyTheme();
@@ -724,8 +777,8 @@ async function searchPlaces(query, center, opts) {
 
 
 let placesIdxP=null;const placesShards=new Map();
-function getPlacesIdx(){if(!placesIdxP)placesIdxP=getJSON('data/places/index.json',{},8000).catch(()=>({keys:{}}));return placesIdxP}
-function getPlacesShard(k){if(!placesShards.has(k))placesShards.set(k,getJSON(`data/places/${k}.json`,{},10000).catch(()=>[]));return placesShards.get(k)}
+function getPlacesIdx(){if(!placesIdxP)placesIdxP=getJSON(PLACES_BASE+'index.json',{},8000).catch(()=>({keys:{}}));return placesIdxP}
+function getPlacesShard(k){if(!placesShards.has(k))placesShards.set(k,getJSON(`${PLACES_BASE}${k}.json`,{},10000).catch(()=>[]));return placesShards.get(k)}
 async function fsqSearch(q){const c=map.getCenter();const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15});
   return r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · ')}))}
 
@@ -1111,13 +1164,13 @@ function positionFabs(){applySheetMin();requestAnimationFrame(()=>{const h=docum
 /* ---------- voice ---------- */
 let voices=[];function loadVoices(){voices=speechSynthesis?speechSynthesis.getVoices():[]}
 if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices}
-function say(text){logEv('say',{x:String(text).slice(0,160)});if(!S.voice||!('speechSynthesis' in window))return;try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);
+function say(text){logEv('say',{x:String(text).slice(0,160)});if(!S.voice)return;if(native.isNative){native.speak(text,S.lang==='ms'?'ms-MY':'en-GB',{rate:1.02});return}if(!('speechSynthesis' in window))return;try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);
   const want=S.lang==='ms'?['ms','id']:['en-GB','en-MY','en'];let v=null;for(const w of want){v=voices.find(x=>x.lang.replace('_','-').toLowerCase().startsWith(w.toLowerCase()));if(v)break}
   if(v){u.voice=v;u.lang=v.lang}else u.lang=S.lang==='ms'?'ms-MY':'en-GB';u.rate=1.02;speechSynthesis.speak(u)}catch(e){}}
 const icoVol=on=>on?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>':'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/></svg>';
 
 /* ---------- navigation ---------- */
-let wake=null;async function keepAwake(){try{wake=await navigator.wakeLock?.request('screen')}catch(e){}}
+let wake=null;async function keepAwake(){try{wake=await native.keepAwake()}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(st.nav&&document.visibilityState==='visible')keepAwake()});
 /* Navigation camera: puts the position dot in the lower part of the screen so the road ahead is visible. */
 let _off=0,_offT=0,viewOn='';
@@ -1152,7 +1205,7 @@ async function startNav(){startWatch();
   navTick();positionFabs();tipCard()}
 function tipCard(){const tk='tipsSeen'+(S.rider?'Moto':'Car');if(store.get(tk,false))return;store.set(tk,true);const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   modal(`<h3>${T('tipT')}</h3><ul style="margin:0 0 12px;padding-left:20px;line-height:1.5"><li>${T('tipScreen')}</li>${ios?`<li>${T('tipIos')}</li>`:''}${S.rider?`<li>${T('tipRider')}</li>`:''}</ul><div style="text-align:right"><button class="btn p" data-close>${T('tipOk')}</button></div>`)}
-function endNav(){if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;if('speechSynthesis' in window)speechSynthesis.cancel();drawRoutes();drawPois();renderSheet();
+function endNav(){if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
   if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}}
 $('#btnEnd').onclick=endNav;
 $('#hdTap').onclick=()=>{st.follow=false;applyView()};
@@ -1166,7 +1219,7 @@ $('#btnZin').onclick=()=>zoomBy(1);$('#btnZout').onclick=()=>zoomBy(-1);
 $('#btnView').onclick=()=>{S.view=S.view==='n'?'h':S.view==='h'?'t':'n';save('view');st.follow=true;applyView();updView();toast({n:T('vN'),h:T('vH'),t:T('v3')}[S.view])};
 function updView(){$('#btnView').classList.toggle('on',S.view!=='n');$('#btnView svg').style.transform=S.view==='n'?'':'rotate(-35deg)'}updView();
 $('#btnReport').onclick=()=>openReport();
-$('#btnMute').onclick=()=>{S.voice=!S.voice;save('voice');$('#btnMute').innerHTML=icoVol(S.voice);if(!S.voice&&'speechSynthesis' in window)speechSynthesis.cancel()};
+$('#btnMute').onclick=()=>{S.voice=!S.voice;save('voice');$('#btnMute').innerHTML=icoVol(S.voice);if(!S.voice)native.stopSpeech()};
 $('#btnShare').onclick=async()=>{const n=st.nav;if(!n)return;const txt=T('shareTxt')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000)))+` https://www.openstreetmap.org/?mlat=${st.dest.lat.toFixed(5)}&mlon=${st.dest.lon.toFixed(5)}#map=16/${st.dest.lat.toFixed(5)}/${st.dest.lon.toFixed(5)}`;
   try{if(navigator.share){await navigator.share({text:txt});return}}catch(e){if(e.name==='AbortError')return}
   try{await navigator.clipboard.writeText(txt);toast(T('copied'))}catch(e){toast(txt)}};
@@ -1273,7 +1326,7 @@ window.addEventListener('resize',positionFabs);
 /* ---------- boot ---------- */
 document.body.classList.toggle('rider',S.rider);$('#btnRider').classList.toggle('on',S.rider);
 applyLang();startWatch();loadDB();
-if('serviceWorker' in navigator && location.protocol==='https:'){try{navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}}
+if(!native.isNative && 'serviceWorker' in navigator && location.protocol==='https:'){try{navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}}
 </script>
 </body>
 </html>
