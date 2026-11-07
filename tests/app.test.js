@@ -290,6 +290,10 @@ describe('heading-up view and passed route', () => {
       assert.ok(!b.classList.contains('hv'), 'north-up on third tap');
       ctx.document.querySelector('#btnView').click();
       assert.ok(b.classList.contains('hv'));
+      const z0 = ctx.window.__app.map ? ctx.window.__app.map.getZoom() : null;
+      ctx.document.querySelector('#btnZout').click();
+      assert.ok(b.classList.contains('hv'), 'zooming keeps heading-up navigation');
+      if (z0 != null) assert.equal(ctx.window.__app.map.getZoom(), z0 - 1);
       ctx.document.querySelector('#hdTap').click();
       assert.ok(!b.classList.contains('hv'), 'tapping the map leaves heading-up so it can be dragged');
       ctx.setPos(5.33, 100.4);

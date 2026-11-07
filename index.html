@@ -18,7 +18,7 @@ body.dark{--bg:#0b1220;--fg:#e2e8f0;--mut:#94a3b8;--line:#1e293b;--card:#111a2e;
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;overflow:hidden;font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg)}
 #map{position:fixed;inset:0;z-index:0}
-#hdTap{position:fixed;inset:0;z-index:5;display:none}body.hv #hdTap{display:block}body.hv #map{pointer-events:none;will-change:transform}
+#hdTap{position:fixed;inset:0;z-index:5;display:none}body.hv #hdTap{display:block}body.hv #map{pointer-events:none;will-change:transform}body.vtr #map{transition:transform .7s cubic-bezier(.4,0,.2,1)}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 input{font:inherit;color:var(--fg)}
 .hidden{display:none!important}
@@ -184,6 +184,8 @@ body.rider #btnShare{display:none}
 
 <div id="hdTap"></div>
 <div id="fabs">
+  <button class="fab" id="btnZin" title="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button class="fab" id="btnZout" title="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
   <button class="fab" id="btnView" title="Heading-up / 3D"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2l6 19-6-4-6 4z"/></svg></button>
   <button class="fab" id="btnRider" title="Motorcycle mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="17" r="3"/><circle cx="19" cy="17" r="3"/><path d="M5 17l4-7h5l5 7M9 10L8 7H6M14 10l2-4h3"/></svg></button>
   <button class="fab" id="btnLayers" title="Map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg></button>
@@ -301,8 +303,8 @@ const TILE_SRC=[
   ()=>({url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',max:19,attr:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'})];
 function setBase(){if(baseL)map.removeLayer(baseL);if(refL){map.removeLayer(refL);refL=null}
   const t=TILE_SRC[tileSrc]();
-  baseL=L.tileLayer(t.url,{maxZoom:20,maxNativeZoom:t.max,attribution:t.attr}).addTo(map);
-  if(t.ref)refL=L.tileLayer(t.ref,{maxZoom:20,maxNativeZoom:t.max,zIndex:4,pane:'overlayPane'}).addTo(map);
+  baseL=L.tileLayer(t.url,{maxZoom:20,maxNativeZoom:t.max,detectRetina:true,attribution:t.attr}).addTo(map);
+  if(t.ref)refL=L.tileLayer(t.ref,{maxZoom:20,maxNativeZoom:t.max,detectRetina:true,zIndex:4,pane:'overlayPane'}).addTo(map);
   baseL.on('tileload',()=>{tileOk++;document.getElementById('boot').classList.add('ok')});
   baseL.on('tileerror',()=>{tileErr++;if(tileOk)return;
     if(tileErr>=6&&tileSrc<TILE_SRC.length-1){tileSrc++;tileErr=0;setBase()}
@@ -956,12 +958,20 @@ function anchorOff(){const H=innerHeight,tb=Math.max(0,$('#navTop').getBoundingC
 /* Heading-up / 3D view: the Leaflet map is oversized and CSS-rotated around the position dot, so the road ahead is always "up". */
 const VK={h:.35,t:.6};
 function setOrigin(){if(!viewOn)return;const m=$('#map'),k=VK[viewOn],W=innerWidth,H=innerHeight;m.style.transformOrigin=`${W*k+W/2}px ${H*k+H/2+_off}px`}
+let _vtT=0;
+function viewTf(hd,v){return `perspective(900px) rotateX(${v==='t'?48:0}deg) rotate(${-hd}deg)`}
 function applyView(){const want=(st.nav&&st.follow&&S.view!=='n')?S.view:'';const m=$('#map');
-  if(want!==viewOn){viewOn=want;document.body.classList.toggle('hv',!!want);document.body.classList.toggle('tv',want==='t');
-    if(want){const k=VK[want]*100;m.style.inset=`-${k}%`}else{m.style.inset='';m.style.transform='';m.style.transformOrigin=''}
-    map.invalidateSize({pan:false});_offT=0;if(st.here)followTo(st.here.lat,st.here.lon,map.getZoom(),false)}
+  if(want!==viewOn){const was=viewOn,hd=(meS&&meS.hd)||0;viewOn=want;
+    document.body.classList.add('vtr');clearTimeout(_vtT);
+    document.body.classList.toggle('hv',!!want);document.body.classList.toggle('tv',want==='t');
+    if(want){const k=VK[want]*100;m.style.inset=`-${k}%`;
+      if(!was){m.style.transition='none';m.style.transform=viewTf(0,'');void m.offsetWidth;m.style.transition=''}
+      map.invalidateSize({pan:false});_offT=0;if(st.here)followTo(st.here.lat,st.here.lon,map.getZoom(),false);setOrigin();m.style.transform=viewTf(hd,want)}
+    else{m.style.transform=viewTf(0,'');
+      _vtT=setTimeout(()=>{if(viewOn)return;m.style.inset='';m.style.transform='';m.style.transformOrigin='';map.invalidateSize({pan:false});_offT=0;if(st.here&&st.follow)followTo(st.here.lat,st.here.lon,map.getZoom(),false);document.body.classList.remove('vtr')},720);return}
+    _vtT=setTimeout(()=>document.body.classList.remove('vtr'),750)}
   setOrigin()}
-function rotateMap(hd){if(!viewOn)return;$('#map').style.transform=(viewOn==='t'?'perspective(900px) rotateX(48deg) ':'')+`rotate(${-hd}deg)`}
+function rotateMap(hd){if(!viewOn)return;$('#map').style.transform=viewTf(hd,viewOn)}
 function followTo(lat,lon,z,anim){if(!anim&&Date.now()-_offT<600){const c=map.unproject(map.project([lat,lon],z).subtract([0,_off]),z);map.setView(c,z,{animate:false});return}
   _offT=Date.now();map.invalidateSize({pan:false});_off=st.nav?anchorOff():0;setOrigin();
   const c=map.unproject(map.project([lat,lon],z).subtract([0,_off]),z);map.setView(c,z,{animate:!!anim})}
@@ -979,6 +989,13 @@ function endNav(){if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' 
   if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}}
 $('#btnEnd').onclick=endNav;
 $('#hdTap').onclick=()=>{st.follow=false;applyView()};
+function zoomBy(d){const z=Math.max(3,Math.min(19,Math.round(map.getZoom())+d));if(st.nav&&st.follow&&st.here){map.setZoom(z,{animate:false});followTo(st.here.lat,st.here.lon,z,false)}else map.setZoom(z)}
+$('#btnZin').onclick=()=>zoomBy(1);$('#btnZout').onclick=()=>zoomBy(-1);
+/* pinch on the rotated map: two fingers zoom without leaving navigation view */
+(()=>{const el=$('#hdTap');let d0=0,done=false;const dist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  el.addEventListener('touchstart',e=>{if(e.touches.length===2){d0=dist(e);done=false}},{passive:true});
+  el.addEventListener('touchmove',e=>{if(e.touches.length!==2||done||!d0)return;const r=dist(e)/d0;if(r>1.3){zoomBy(1);done=true}else if(r<.75){zoomBy(-1);done=true}},{passive:true});
+  el.addEventListener('touchend',e=>{if(e.touches.length<2)d0=0},{passive:true})})();
 $('#btnView').onclick=()=>{S.view=S.view==='n'?'h':S.view==='h'?'t':'n';save('view');st.follow=true;applyView();updView();toast({n:T('vN'),h:T('vH'),t:T('v3')}[S.view])};
 function updView(){$('#btnView').classList.toggle('on',S.view!=='n');$('#btnView svg').style.transform=S.view==='n'?'':'rotate(-35deg)'}updView();
 $('#btnReport').onclick=()=>openReport();
