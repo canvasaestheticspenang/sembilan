@@ -330,3 +330,14 @@ describe('official PLUS fares', () => {
     });
   });
 });
+
+describe('pasted coordinates and map links', () => {
+  it('turns "3.1390, 101.6869" and a Google Maps URL into a place', { timeout: TIMEOUT }, async () => {
+    await withApp({}, async (ctx) => {
+      const a = await ctx.app.geocode('3.1390, 101.6869');
+      assert.equal(a.length, 1); assert.equal(a[0].lat, 3.139); assert.equal(a[0].lon, 101.6869);
+      const g = await ctx.app.geocode('https://www.google.com/maps/place/Uo+Shin/@3.1801,101.6501,17z/data=!3d3.1801!4d101.6502');
+      assert.equal(g[0].lat, 3.1801); assert.equal(g[0].lon, 101.6502);
+    });
+  });
+});

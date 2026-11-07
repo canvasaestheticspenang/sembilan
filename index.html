@@ -389,7 +389,9 @@ async function ttOne(q,signal,extra){const c=map.getCenter();
   return (j.results||[]).filter(r=>r.position).map(r=>{const a=r.address||{};return{lat:r.position.lat,lon:r.position.lon,name:(r.poi&&r.poi.name)||a.freeformAddress||q,sub:[r.poi?a.streetName:'',a.municipality,a.countrySubdivision].filter(Boolean).join(', ')}})}
 async function ttSearch(q,signal){if(!S.tomtom)return[];
   const r=await Promise.allSettled([ttOne(q,signal,'&idxSet=POI'),ttOne(q,signal,'')]);return r.flatMap(x=>x.status==='fulfilled'?x.value:[])}
-async function geocode(q,signal){const [a,b]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal)]);
+function parseCoordQuery(q){let m=q.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)||q.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)||q.match(/[?&](?:q|ll|query|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i)||q.match(/^\s*(-?\d{1,2}\.\d{2,})\s*[, ]\s*(-?\d{2,3}\.\d{2,})\s*$/);
+  if(!m)return null;const la=+m[1],lo=+m[2];if(la<-11||la>8||lo<94||lo>120)return null;return{lat:la,lon:lo,name:`${la.toFixed(5)}, ${lo.toFixed(5)}`,sub:S.lang==='ms'?'Koordinat / pautan peta':'Coordinates / map link'}}
+async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal)]);
   if(signal&&signal.aborted)throw new DOMException('Aborted','AbortError');
   if(a.status==='rejected'&&b.status==='rejected')throw a.reason;
   const c=map.getCenter();

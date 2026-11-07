@@ -2,7 +2,7 @@
 // map tiles available offline. Routing, search, Overpass, weather and radar
 // requests are never intercepted; POST and other non-GET requests are never cached.
 
-const VERSION = 's9-v9';
+const VERSION = 's9-v10';
 const PREFIX = 'sembilan-';
 const SHELL_CACHE = `${PREFIX}${VERSION}-shell`;
 const DATA_CACHE = `${PREFIX}${VERSION}-data`;
