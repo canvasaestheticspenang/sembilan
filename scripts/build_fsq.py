@@ -12,6 +12,7 @@ import datetime as dt
 import gzip
 import json
 import math
+import os
 import re
 import sys
 import unicodedata
@@ -33,13 +34,29 @@ SHARD_RE = re.compile(r"^[a-z0-9]+\.json$")
 
 SELECT_SQL = """
 SELECT fsq_place_id, name, latitude, longitude, address, locality, region,
-       fsq_category_labels
+       {labels}
 FROM read_parquet(?)
 WHERE country = 'MY'
   AND name IS NOT NULL AND trim(name) <> ''
   AND latitude IS NOT NULL AND longitude IS NOT NULL
   AND date_closed IS NULL
 """
+HF_REPO = "foursquare/fsq-os-places"
+
+
+def hf_release(token: str, release: str | None) -> str:
+    """Newest dt=YYYY-MM-DD release of the (gated) Hugging Face dataset, or the one asked for."""
+    if release:
+        return release
+    try:
+        from huggingface_hub import HfApi
+        files = HfApi().list_repo_files(HF_REPO, repo_type="dataset", token=token)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"Could not list the Hugging Face dataset ({e}). Check HF_TOKEN and that you accepted the dataset terms, or pass --release.")
+    dates = {m.group(1) for f in files if "/places/parquet/" in f and (m := DT_RE.search(f))}
+    if not dates:
+        raise SystemExit("No places release found on Hugging Face. Pass --release YYYY-MM-DD.")
+    return max(dates)
 
 
 def normalise_words(name: str) -> list[str]:
@@ -148,7 +165,9 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--release must look like YYYY-MM-DD")
 
     con = duckdb.connect()
-    if args.input is None or args.input.startswith("s3://"):
+    token = os.environ.get("HF_TOKEN", "").strip()
+    use_hf = args.input is None and bool(token)
+    if args.input is None or args.input.startswith("s3://") or use_hf:
         try:
             con.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-east-1';")
         except duckdb.Error as e:
@@ -159,6 +178,11 @@ def main(argv: list[str] | None = None) -> int:
         if Path(source).is_dir():
             source = str(Path(source) / "*.parquet")
         label = args.release or args.input
+    elif use_hf:
+        release = hf_release(token, args.release)
+        con.execute("CREATE SECRET hf_secret (TYPE HUGGINGFACE, TOKEN '" + token.replace("'", "") + "')")
+        source = f"hf://datasets/{HF_REPO}/release/dt={release}/places/parquet/*.parquet"
+        label = release
     else:
         release = args.release or discover_release(con)
         source = f"{S3_ROOT}/dt={release}/places/parquet/*.parquet"
@@ -167,7 +191,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"release: {label}")
 
     try:
-        rows = con.execute(SELECT_SQL, [source]).fetchall()
+        cols = {r[0] for r in con.execute("DESCRIBE SELECT * FROM read_parquet(?)", [source]).fetchall()}
+        labels = "fsq_category_labels" if "fsq_category_labels" in cols else "NULL::VARCHAR[] AS fsq_category_labels"
+        print(f"category labels column: {'yes' if 'fsq_category_labels' in cols else 'no (category text left empty)'}")
+        rows = con.execute(SELECT_SQL.format(labels=labels), [source]).fetchall()
     except duckdb.Error as e:
         raise SystemExit(f"Failed to read {source}: {e}")
     print(f"rows after MY/open/name/coords filter: {len(rows)}")

@@ -25,11 +25,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install DuckDB
-        run: pip install duckdb
+        run: pip install duckdb huggingface_hub
 
       - name: Build search shards
         env:
           RELEASE: ${{ inputs.release }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           ARGS=(--out data/places)
           if [ -n "$RELEASE" ]; then
