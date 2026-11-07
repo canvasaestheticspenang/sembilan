@@ -10,7 +10,7 @@ Output format (kept compact for fast loading on phones):
   extra: fuel -> station name if different from brand; rr -> "services" or "rest_area";
          cam -> maxspeed; shelter -> "pt" for bus-stop shelters
 """
-import json, sys, datetime
+import json, os, sys, datetime
 
 ROADS = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
          "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
@@ -89,6 +89,7 @@ def main(src, dst):
     out = {"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
            "source": "OpenStreetMap contributors (ODbL), via Geofabrik",
            "pois": pois, "nomoto": nomoto}
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
     with open(dst, "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(",", ":"))
     counts = {}
