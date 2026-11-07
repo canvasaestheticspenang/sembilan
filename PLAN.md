@@ -23,5 +23,5 @@ Not in this round (needs money or a real ride): live traffic, avoid-tolls routin
 |---|------|-------|-----|--------|
 | E | Trip log + "Laporkan masalah" (report a problem) button: tester describes the issue, app attaches what happened (route, last GPS points, last voice prompts, reroutes, device), shares via WhatsApp/share sheet. Owner number can be set later in one constant. Tests included. | `index.html`, `tests/` | Haiku agent | Done |
 | J | Tester guide page in BM + English: install, how to test safely, what to report | `panduan.html` | Haiku agent | Done |
-| K | Night mode: dark map automatically after sunset (less glare for riders), manual override kept. Tests included. | `index.html`, `tests/` | Haiku agent, after E | Waiting |
+| K | Night mode: dark map automatically after sunset (less glare for riders), manual override kept. Tests included. | `index.html`, `tests/` | Haiku agent | Done |
 | — | Review, run tests, push | — | Claude (Opus) | After each task |
