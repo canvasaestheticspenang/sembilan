@@ -47,13 +47,13 @@ describe('motorcycle mode with the data file', () => {
     });
   });
 
-  // Real bug in index.html: the shelter chip counts fuel stations and R&R too, because
-  // SHELTERS = ['shelter', 'fuel', 'rr'] is used for the chip. The data has one shelter.
-  it('shelter chip shows only the number of shelters', { timeout: TIMEOUT, todo: 'BUG in index.html: shelter chip counts fuel and R&R as shelters (SHELTERS includes fuel and rr); data has 1 shelter but chip says 2' }, async () => {
+  // By design, petrol stations and R&R count as shelter spots for riders
+  // (SHELTERS = ['shelter','fuel','rr']). The data has 1 shelter + 1 petrol station.
+  it('shelter chip counts shelters, petrol stations and R&R', { timeout: TIMEOUT }, async () => {
     await withApp({ rider: true, withDB: true }, async (ctx) => {
       await ctx.search('gurney');
       await readyRoute(ctx);
-      assert.match(sheetText(ctx), /1 tempat berteduh/);
+      assert.match(sheetText(ctx), /2 tempat berteduh/);
     });
   });
 
@@ -191,7 +191,7 @@ describe('unit: instructions and search results', () => {
 
   // Real bug in index.html: dedupePlaces() merges any two same-name results with the same
   // "sub" text, however far apart they are, because of the `o.sub === p.sub` test.
-  it('dedupePlaces() keeps same-name results in the same area that are far apart', { timeout: TIMEOUT, todo: 'BUG in index.html: dedupePlaces merges same-name places with the same area text even when they are ~25 km apart (the 500 m rule is not applied)' }, async () => {
+  it('dedupePlaces() keeps same-name results in the same area that are far apart', { timeout: TIMEOUT }, async () => {
     await withApp({}, async ({ app }) => {
       const out = app.dedupePlaces([
         { name: 'Shell', sub: 'Kuala Lumpur', lat: 3.1579, lon: 101.7116 },

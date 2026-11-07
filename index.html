@@ -277,7 +277,7 @@ function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.na
 const qO=$('#qOrigin'),qD=$('#qDest'),sugg=$('#sugg');
 let sTimer,sCtl;
 function dedupePlaces(list){const out=[];for(const p of list){const k=(p.name||'').trim().toLowerCase();
-    if(out.some(o=>(o.name||'').trim().toLowerCase()===k&&((o.sub||'')===(p.sub||'')||hav(o.lat,o.lon,p.lat,p.lon)<500)))continue;out.push(p)}return out}
+    if(out.some(o=>{if((o.name||'').trim().toLowerCase()!==k)return false;const d=hav(o.lat,o.lon,p.lat,p.lon);return d<500||((o.sub||'')===(p.sub||'')&&d<3000)}))continue;out.push(p)}return out}
 async function geocode(q,signal){return dedupePlaces(await geocodeRaw(q,signal))}
 async function geocodeRaw(q,signal){const c=map.getCenter();
   try{const j=await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&bbox=99.5,0.8,119.5,7.5`,{signal},10000);
