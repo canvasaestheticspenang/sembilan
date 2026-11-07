@@ -1,0 +1,13 @@
+{
+  "name": "sembilan",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sembilan navigation web app (single-page, no build step)",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  },
+  "devDependencies": {
+    "jsdom": "^31.0.0",
+    "leaflet": "1.9.4"
+  }
+}
