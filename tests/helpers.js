@@ -214,7 +214,7 @@ async function bootApp(opts = {}) {
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={S,st,T,trivial,instr,dedupePlaces};`);
+  w.eval(`${app}\n;window.__app={S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store};`);
   w.__said = said;
 
   const ctx = {
