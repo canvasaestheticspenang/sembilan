@@ -225,17 +225,17 @@ if(!window.L){document.getElementById('bootMsg').innerHTML='<b>Peta tidak dapat 
 /* ---------- storage & settings ---------- */
 const store={get(k,d){try{const v=localStorage.getItem('s9_'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('s9_'+k,JSON.stringify(v))}catch(e){}}};
 const TT_DEFAULT='RCOJ7rhUpYA15gZDzjan9cXZHyjMXqUS'; // optional built-in TomTom key (restrict it to this site's domain in the TomTom dashboard)
-const S={view:store.get('view','h'),lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:(()=>{const v=store.get('tomtom',null);return v===null?TT_DEFAULT:v})(),traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false)};
+const S={view:store.get('view','h'),lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:(()=>{const v=store.get('tomtom',null);return v===null?TT_DEFAULT:v})(),traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false),cartoon:store.get('cartoon',false)};
 const save=k=>store.set(k,S[k]);
 const APP_VER='2026.11.07';
 const REPORT_TO='';// owner's WhatsApp number e.g. 60123456789; empty = tester picks a contact
 
 /* ---------- i18n ---------- */
 const I={
-ms:{tollOff:'kadar rasmi PLUS',vN:'Peta: Utara di atas',vH:'Peta: ikut arah',v3:'Peta: 3D ikut arah',myLoc:'Lokasi saya',where:'Ke mana?',from:'Dari',saved:'Tempat disimpan',recent:'Terkini',noRes:'Tiada hasil',start:'Mula',steps:'Arahan',avoidTolls:'Elak tol',routes:'Laluan',along:'Sepanjang laluan',fuel:'Petrol',rr:'R&R',cam:'Kamera',toll:'Tol',all:'Semua',loadingPoi:'Mencari stesen petrol, R&R, tol & kamera…',poiFail:'Maklumat sepanjang laluan tidak dapat dimuatkan.',noPoi:'Tiada ditemui di sepanjang laluan ini.',end:'Tamat',arrive:'Anda telah tiba di destinasi',reroute:'Mengira semula laluan',routeFail:'Laluan tidak dapat dikira. Cuba lagi.',noGeo:'Lokasi tidak tersedia. Benarkan akses lokasi dalam pelayar.',needOrigin:'Menunggu lokasi anda…',tollFail:'Pilihan "elak" tidak dapat digunakan untuk laluan ini.',settings:'Tetapan',lang:'Bahasa',voice:'Panduan suara',thLabel:'Peta',thAuto:'Auto',thLight:'Cerah',thDark:'Gelap',traffic:'Lapisan trafik langsung (TomTom)',ttKey:'Kunci API TomTom (pilihan, percuma di developer.tomtom.com)',close:'Tutup',about:'Data peta © penyumbang OpenStreetMap. Laluan: OSRM. Carian: Photon. Tiada akaun, tiada penjejakan — semuanya kekal dalam pelayar anda.',in:'Dalam',then:'Kemudian',camAhead:'Kamera laju di hadapan',km:'km',min:'min',hr:'j',arr:'Tiba',left:'lagi',shareTxt:(d,t)=>`Saya dalam perjalanan ke ${d}. Anggaran tiba ${t}.`,copied:'Disalin ke papan klip',saveP:'Simpan tempat',savedOk:'Tempat disimpan',tollsN:n=>`≈${n} plaza tol`,camsN:n=>`${n} kamera`,fuelN:n=>`${n} stesen petrol`,rrN:n=>`${n} R&R`,fromStart:'dari mula',ahead:'di hadapan',longPress:'Tekan lama pada peta untuk pilih destinasi.',pinned:'Titik dipilih',camNote:'Kamera mungkin termasuk arah bertentangan.',startGps:'Navigasi bermula dari lokasi semasa anda.',layers:'Lapisan peta',fastest:'Terpantas',
+ms:{tollOff:'kadar rasmi PLUS',vN:'Peta: Utara di atas',vH:'Peta: ikut arah',v3:'Peta: 3D ikut arah',myLoc:'Lokasi saya',where:'Ke mana?',from:'Dari',saved:'Tempat disimpan',recent:'Terkini',noRes:'Tiada hasil',start:'Mula',steps:'Arahan',avoidTolls:'Elak tol',routes:'Laluan',along:'Sepanjang laluan',fuel:'Petrol',rr:'R&R',cam:'Kamera',toll:'Tol',all:'Semua',loadingPoi:'Mencari stesen petrol, R&R, tol & kamera…',poiFail:'Maklumat sepanjang laluan tidak dapat dimuatkan.',noPoi:'Tiada ditemui di sepanjang laluan ini.',end:'Tamat',arrive:'Anda telah tiba di destinasi',reroute:'Mengira semula laluan',routeFail:'Laluan tidak dapat dikira. Cuba lagi.',noGeo:'Lokasi tidak tersedia. Benarkan akses lokasi dalam pelayar.',needOrigin:'Menunggu lokasi anda…',tollFail:'Pilihan "elak" tidak dapat digunakan untuk laluan ini.',settings:'Tetapan',lang:'Bahasa',voice:'Panduan suara',thLabel:'Peta',thAuto:'Auto',thLight:'Cerah',thDark:'Gelap',traffic:'Lapisan trafik langsung (TomTom)',ttKey:'Kunci API TomTom (pilihan, percuma di developer.tomtom.com)',close:'Tutup',about:'Data peta © penyumbang OpenStreetMap. Laluan: OSRM. Carian: Photon. Tiada akaun, tiada penjejakan — semuanya kekal dalam pelayar anda.',in:'Dalam',then:'Kemudian',camAhead:'Kamera laju di hadapan',km:'km',min:'min',hr:'j',arr:'Tiba',left:'lagi',shareTxt:(d,t)=>`Saya dalam perjalanan ke ${d}. Anggaran tiba ${t}.`,copied:'Disalin ke papan klip',saveP:'Simpan tempat',savedOk:'Tempat disimpan',tollsN:n=>`≈${n} plaza tol`,camsN:n=>`${n} kamera`,fuelN:n=>`${n} stesen petrol`,rrN:n=>`${n} R&R`,fromStart:'dari mula',ahead:'di hadapan',longPress:'Tekan lama pada peta untuk pilih destinasi.',pinned:'Titik dipilih',camNote:'Kamera mungkin termasuk arah bertentangan.',startGps:'Navigasi bermula dari lokasi semasa anda.',layers:'Lapisan peta',cartoon:'Peta kartun (percubaan)',cartoonLoad:'Memuatkan peta kartun…',cartoonFail:'Peta kartun tidak dapat dimuatkan. Guna peta biasa.',fastest:'Terpantas',
 rider:'Mod motosikal',riderOn:'Mod motosikal dihidupkan',riderOff:'Mod kereta',radar:'Radar hujan (RainViewer)',radarFail:'Radar hujan tidak dapat dimuatkan.',family:'No. WhatsApp keluarga (cth. 60123456789)',tellFamily:'Beritahu keluarga',safeArr:'Sampai dengan selamat',safeMsg:d=>`Saya sudah sampai di ${d} dengan selamat.`,startMsg:(d,t)=>`Saya mula menunggang ke ${d}. Anggaran tiba ${t}.`,weather:'Hujan sepanjang laluan',rainLoading:'Menyemak ramalan hujan…',rainFail:'Ramalan hujan tidak dapat dimuatkan.',dry:'Dijangka kering sepanjang perjalanan',rainAt:(l,p,t)=>`${l} di ${p} sekitar ${t}`,lvl1:'Hujan renyai',lvl2:'Hujan sederhana',lvl3:'Hujan lebat',bestLeave:m=>`Tunggu ${m} min untuk kurangkan hujan`,nowL:'Sekarang',startL:'Mula',destL:'Destinasi',rainAhead:'Hujan di hadapan',shelter:'Berteduh',shelterN:n=>`${n} tempat berteduh`,noMoto:'Larangan motosikal',noMotoSwitch:'Laluan lain dipilih untuk elak jalan larangan motosikal.',riderNote:'Laluan dikira oleh enjin laluan kereta; jalan larangan motosikal disemak dan ditanda.',forecastSrc:'Ramalan: Open-Meteo. Anggaran sahaja.',avoidHwy:'Elak lebuh raya',aheadW:'di hadapan',shelterName:'Tempat berteduh',guide:'Panduan penguji',noTraffic:'Masa anggaran tanpa trafik',carFallback:'Enjin laluan utama tidak dapat dicapai. Laluan kereta sahaja ditunjuk; semak larangan motosikal dan tol sendiri.',tollY:'Ada tol',tollMoto:'percuma untuk motosikal',tollMore:'tol lain',tollUnk:'harga belum diketahui',tollNote:'Harga tol ialah anggaran untuk kereta (Kelas 1). Rujuk kadar rasmi LLM/konsesi.',tollN:'Tanpa tol',motoRoute:'Laluan dikira untuk motosikal (OpenStreetMap). Jalan larangan motosikal dielak.',liveTraffic:'Termasuk trafik semasa (TomTom)',delayN:n=>`+${n} min lewat akibat trafik`,ttOk:'Kunci TomTom sah. Trafik dihidupkan.',ttBad:'Kunci TomTom tidak sah atau ditolak.',loadingMore:'Memuatkan lagi sepanjang laluan…',poiPartial:'Sebahagian laluan tidak dapat dimuatkan.',
 tipT:'Sebelum bergerak',tipScreen:'Kekalkan skrin menyala dan aplikasi terbuka semasa navigasi.',tipIos:'iPhone menghentikan GPS apabila skrin dikunci atau anda tukar aplikasi. Arahan suara berhenti sehingga anda kembali.',tipRider:'Sambung fon kepala Bluetooth topi keledar sebelum mula supaya arahan suara didengar. Jangan sentuh telefon semasa menunggang.',tipOk:'Faham',dataUpd:d=>`Data petrol/R&R/tol/kamera: dikemas kini ${d}`,dataLive:'Data: dimuat secara langsung',rpTitle:'Laporkan masalah',rpC0:'Arahan salah',rpC1:'Suara',rpC2:'Tempat hilang atau salah',rpC3:'Hujan',rpC4:'Lain-lain',rpQ:'Apa berlaku?',rpSend:'Hantar via WhatsApp',rpCopy:'Salin',rpCopied:'Disalin',rpCopyFail:'Salin automatik tidak berjaya. Teks dipilih untuk disalin secara manual.',rpPriv:'Laporan hanya dihantar apabila anda tekan Hantar. Koordinat dibundarkan (~10 m). Nombor keluarga tidak disertakan.'},
-en:{tollOff:'official PLUS fare',vN:'Map: north up',vH:'Map: heading up',v3:'Map: 3D heading up',myLoc:'My location',where:'Where to?',from:'From',saved:'Saved places',recent:'Recent',noRes:'No results',start:'Start',steps:'Steps',avoidTolls:'Avoid tolls',routes:'Routes',along:'Along the route',fuel:'Petrol',rr:'R&R',cam:'Cameras',toll:'Tolls',all:'All',loadingPoi:'Finding petrol, R&R, tolls & cameras…',poiFail:'Couldn\'t load along-route info.',noPoi:'None found along this route.',end:'End',arrive:'You have arrived',reroute:'Recalculating route',routeFail:'Couldn\'t calculate a route. Try again.',noGeo:'Location unavailable. Allow location access in your browser.',needOrigin:'Waiting for your location…',tollFail:'That avoid option isn\'t available for this route.',settings:'Settings',lang:'Language',voice:'Voice guidance',thLabel:'Map',thAuto:'Auto',thLight:'Light',thDark:'Dark',traffic:'Live traffic layer (TomTom)',ttKey:'TomTom API key (optional, free at developer.tomtom.com)',close:'Close',about:'Map data © OpenStreetMap contributors. Routing: OSRM. Search: Photon. No account, no tracking — everything stays in your browser.',in:'In',then:'Then',camAhead:'Speed camera ahead',km:'km',min:'min',hr:'h',arr:'Arrive',left:'left',shareTxt:(d,t)=>`I'm on my way to ${d}. ETA ${t}.`,copied:'Copied to clipboard',saveP:'Save place',savedOk:'Place saved',tollsN:n=>`≈${n} toll plazas`,camsN:n=>`${n} cameras`,fuelN:n=>`${n} petrol stations`,rrN:n=>`${n} R&R`,fromStart:'from start',ahead:'ahead',longPress:'Long-press the map to pick a destination.',pinned:'Dropped pin',camNote:'Cameras may include the opposite direction.',startGps:'Navigation starts from your current location.',layers:'Map layers',fastest:'Fastest',
+en:{tollOff:'official PLUS fare',vN:'Map: north up',vH:'Map: heading up',v3:'Map: 3D heading up',myLoc:'My location',where:'Where to?',from:'From',saved:'Saved places',recent:'Recent',noRes:'No results',start:'Start',steps:'Steps',avoidTolls:'Avoid tolls',routes:'Routes',along:'Along the route',fuel:'Petrol',rr:'R&R',cam:'Cameras',toll:'Tolls',all:'All',loadingPoi:'Finding petrol, R&R, tolls & cameras…',poiFail:'Couldn\'t load along-route info.',noPoi:'None found along this route.',end:'End',arrive:'You have arrived',reroute:'Recalculating route',routeFail:'Couldn\'t calculate a route. Try again.',noGeo:'Location unavailable. Allow location access in your browser.',needOrigin:'Waiting for your location…',tollFail:'That avoid option isn\'t available for this route.',settings:'Settings',lang:'Language',voice:'Voice guidance',thLabel:'Map',thAuto:'Auto',thLight:'Light',thDark:'Dark',traffic:'Live traffic layer (TomTom)',ttKey:'TomTom API key (optional, free at developer.tomtom.com)',close:'Close',about:'Map data © OpenStreetMap contributors. Routing: OSRM. Search: Photon. No account, no tracking — everything stays in your browser.',in:'In',then:'Then',camAhead:'Speed camera ahead',km:'km',min:'min',hr:'h',arr:'Arrive',left:'left',shareTxt:(d,t)=>`I'm on my way to ${d}. ETA ${t}.`,copied:'Copied to clipboard',saveP:'Save place',savedOk:'Place saved',tollsN:n=>`≈${n} toll plazas`,camsN:n=>`${n} cameras`,fuelN:n=>`${n} petrol stations`,rrN:n=>`${n} R&R`,fromStart:'from start',ahead:'ahead',longPress:'Long-press the map to pick a destination.',pinned:'Dropped pin',camNote:'Cameras may include the opposite direction.',startGps:'Navigation starts from your current location.',layers:'Map layers',cartoon:'Cartoon map (experimental)',cartoonLoad:'Loading cartoon map…',cartoonFail:'Cartoon map could not load. Using the standard map.',fastest:'Fastest',
 rider:'Motorcycle mode',riderOn:'Motorcycle mode on',riderOff:'Car mode',radar:'Rain radar (RainViewer)',radarFail:'Couldn\'t load rain radar.',family:'Family WhatsApp number (e.g. 60123456789)',tellFamily:'Tell family',safeArr:'Arrived safely',safeMsg:d=>`I've arrived safely at ${d}.`,startMsg:(d,t)=>`I'm riding to ${d}. ETA ${t}.`,weather:'Rain along the route',rainLoading:'Checking rain forecast…',rainFail:'Couldn\'t load rain forecast.',dry:'Expected dry all the way',rainAt:(l,p,t)=>`${l} near ${p} around ${t}`,lvl1:'Light rain',lvl2:'Moderate rain',lvl3:'Heavy rain',bestLeave:m=>`Wait ${m} min to avoid most rain`,nowL:'Now',startL:'Start',destL:'Destination',rainAhead:'Rain ahead',shelter:'Shelter',shelterN:n=>`${n} shelter spots`,noMoto:'No motorcycles',noMotoSwitch:'Switched to a route without no-motorcycle roads.',riderNote:'Routes come from a car routing engine; no-motorcycle roads are checked and flagged.',forecastSrc:'Forecast: Open-Meteo. Estimate only.',avoidHwy:'Avoid expressways',aheadW:'ahead',shelterName:'Shelter',guide:'Tester guide',noTraffic:'Times assume no traffic',carFallback:'Main routing server unreachable. Showing car routes only; check motorcycle bans and tolls yourself.',tollY:'Tolls',tollMoto:'free for motorcycles',tollMore:'other tolls',tollUnk:'price unknown',tollNote:'Toll prices are estimates for cars (Class 1). Check official LLM / operator rates.',tollN:'No tolls',motoRoute:'Route calculated for motorcycles (OpenStreetMap). No-motorcycle roads are avoided.',liveTraffic:'Includes live traffic (TomTom)',delayN:n=>`+${n} min traffic delay`,ttOk:'TomTom key works. Traffic is on.',ttBad:'TomTom key is invalid or was rejected.',loadingMore:'Loading more along the route…',poiPartial:'Part of the route couldn\'t be loaded.',
 tipT:'Before you go',tipScreen:'Keep the screen on and the app open while navigating.',tipIos:'iPhone pauses GPS when the screen locks or you switch apps. Voice directions stop until you come back.',tipRider:'Connect your Bluetooth helmet headset before starting so voice prompts are heard. Do not touch your phone while riding.',tipOk:'Got it',dataUpd:d=>`Petrol/R&R/toll/camera data: updated ${d}`,dataLive:'Data: loaded live',rpTitle:'Report a problem',rpC0:'Wrong direction',rpC1:'Voice',rpC2:'Missing or wrong place',rpC3:'Rain',rpC4:'Other',rpQ:'What happened?',rpSend:'Send via WhatsApp',rpCopy:'Copy',rpCopied:'Copied',rpCopyFail:'Automatic copy didn\'t work. The text is selected so you can copy it manually.',rpPriv:'The report is sent only when you press Send. Coordinates are rounded (~10 m). The family number is not included.'}};
 const T=k=>I[S.lang][k];
@@ -301,7 +301,8 @@ const TILE_SRC=[
   ()=>S.dark?{url:ESRI+'Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',ref:ESRI+'Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',max:16,attr:'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors'}
            :{url:ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}',max:19,attr:'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors'},
   ()=>({url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',max:19,retina:true,attr:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'})];
-function setBase(){if(baseL)map.removeLayer(baseL);if(refL){map.removeLayer(refL);refL=null}
+function setBase(){if(S.cartoon&&cartoonL){cartoonRestyle();document.body.classList.toggle('dark',S.dark);return}
+  if(baseL)map.removeLayer(baseL);if(refL){map.removeLayer(refL);refL=null}
   const t=TILE_SRC[tileSrc]();
   baseL=L.tileLayer(t.url,{maxZoom:20,maxNativeZoom:t.max,detectRetina:!!t.retina,attribution:t.attr}).addTo(map);
   if(t.ref)refL=L.tileLayer(t.ref,{maxZoom:20,maxNativeZoom:t.max,detectRetina:false,zIndex:4,pane:'overlayPane'}).addTo(map);
@@ -309,8 +310,95 @@ function setBase(){if(baseL)map.removeLayer(baseL);if(refL){map.removeLayer(refL
   baseL.on('tileerror',()=>{tileErr++;if(tileOk)return;
     if(tileErr>=6&&tileSrc<TILE_SRC.length-1){tileSrc++;tileErr=0;setBase()}
     else if(tileErr>=6)document.getElementById('bootMsg').innerHTML='<b>Imej peta disekat di sini.</b><br>Map images are blocked here.'});
-  document.body.classList.toggle('dark',S.dark)}
+  document.body.classList.toggle('dark',S.dark);if(S.cartoon)cartoonStart()}
 setTimeout(()=>{if(!tileOk)document.getElementById('bootMsg').innerHTML='<b>Peta masih belum dimuatkan.</b><br>The map still hasn\'t loaded.'},12000);
+/* ===== EXPERIMENTAL cartoon map (vector tiles, loaded lazily; the raster maps above stay the default and the fallback) =====
+   MapLibre GL JS 4.7.1 (BSD-3) + maplibre-gl-leaflet 0.0.22 (ISC) from unpkg, style + tiles from OpenFreeMap (free, no key),
+   restyled after load with setPaintProperty. Nothing here is fetched unless the rider turns the style on. */
+var cartoonL=null,cartoonRun=0,cartoonOrig={};
+const CARTOON={
+  css:'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css',
+  js:'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js',
+  adapter:'https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js',
+  style:'https://tiles.openfreemap.org/styles/bright',
+  attr:'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · <a href="https://maplibre.org" target="_blank" rel="noopener">MapLibre</a>',
+  timeout:15000,
+  load(){ // resolves when L.maplibreGL exists; tests replace this
+    const el=(tag,at)=>new Promise((ok,no)=>{const e=document.createElement(tag);Object.assign(e,at);e.onload=ok;e.onerror=()=>no(new Error('load '+(at.src||at.href)));document.head.appendChild(e)});
+    if(window.maplibregl&&L.maplibreGL)return Promise.resolve();
+    return Promise.all([el('link',{rel:'stylesheet',href:CARTOON.css}),el('script',{src:CARTOON.js,async:false})])
+      .then(()=>el('script',{src:CARTOON.adapter,async:false}))
+      .then(()=>{if(!L.maplibreGL)throw new Error('adapter missing')})}};
+const CARTOON_PAL={
+  light:{land:'#f7f1e3',water:'#8fd6f5',park:'#b9e6a3',wood:'#a6dc93',sand:'#f6e6b4',bldg:'#f0dccb',res:'#f3ecdb',ind:'#ece3d3',
+    mway:'#ff9561',trunk:'#ffb347',prim:'#ffd45e',sec:'#fff0b0',minor:'#ffffff',path:'#e9b79b',rail:'#c9b8d6',casing:'#e2c9a3',txt:'#4a3f35',halo:'#fffaf0'},
+  dark:{land:'#1e2433',water:'#27507a',park:'#244634',wood:'#1f3d2e',sand:'#3a3a33',bldg:'#2c3248',res:'#222839',ind:'#252b3b',
+    mway:'#f08a4b',trunk:'#d99b3d',prim:'#c9b04e',sec:'#7f8bb8',minor:'#46506f',path:'#6b5a68',rail:'#5a4f73',casing:'#11141d',txt:'#e8ecf5',halo:'#161a26'}};
+function cartoonScale(w,k){ // scale a MapLibre width value (number or zoom-interpolate/step expression) by k
+  if(typeof w==='number')return w*k;
+  if(Array.isArray(w)&&(w[0]==='interpolate'||w[0]==='interpolate-hcl'||w[0]==='interpolate-lab')){return w.map((v,i)=>i>=4&&i%2===0?cartoonScale(v,k):v)}
+  if(Array.isArray(w)&&w[0]==='step'){return w.map((v,i)=>i===1||(i>=2&&i%2===0)?cartoonScale(v,k):v)}
+  if(Array.isArray(w)&&w[0]==='*'&&typeof w[1]==='number'){return ['*',w[1]*k,...w.slice(2)]}
+  return w}
+function cartoonRestyle(){
+  const gm=cartoonL&&cartoonL.getMaplibreMap&&cartoonL.getMaplibreMap();if(!gm)return;
+  const c=CARTOON_PAL[S.dark?'dark':'light'];
+  let layers;try{layers=gm.getStyle().layers||[]}catch(e){return}
+  const paint=(id,p,v)=>{try{gm.setPaintProperty(id,p,v)}catch(e){}};
+  const lay=(id,p,v)=>{try{gm.setLayoutProperty(id,p,v)}catch(e){}};
+  for(const l of layers){const id=l.id,t=l.type;
+    if(t==='background'){paint(id,'background-color',c.land);continue}
+    if(t==='symbol'){
+      if(/^poi_/.test(id)){lay(id,'visibility','none');continue}
+      paint(id,'text-color',c.txt);paint(id,'text-halo-color',c.halo);paint(id,'text-halo-width',1.6);continue}
+    if(t==='fill'){
+      const col=/^water/.test(id)?c.water:/park|grass/.test(id)?c.park:/wood/.test(id)?c.wood:/sand/.test(id)?c.sand:/^building/.test(id)?c.bldg
+        :/industrial|railway|commercial/.test(id)?c.ind:/^landuse|^landcover/.test(id)?c.res:null;
+      if(col){paint(id,'fill-color',col);if(/^building/.test(id))paint(id,'fill-opacity',.85)}
+      continue}
+    if(t!=='line')continue;
+    if(/^waterway/.test(id)){paint(id,'line-color',c.water);continue}
+    const road=/^(highway|tunnel|bridge)-/.test(id)&&!/(path|name|shield)/.test(id);
+    if(/^railway|-railway|cablecar/.test(id)){paint(id,'line-color',c.rail);continue}
+    if(!road){if(/^(highway|tunnel|bridge)-path/.test(id))paint(id,'line-color',c.path);continue}
+    const casing=/casing$/.test(id);
+    const fill=/motorway/.test(id)?c.mway:/trunk/.test(id)?c.trunk:/primary/.test(id)?c.prim:/secondary|tertiary/.test(id)?c.sec:c.minor;
+    paint(id,'line-color',casing?c.casing:fill);
+    paint(id,'line-opacity',1);
+    if(!(id in cartoonOrig)){try{cartoonOrig[id]=gm.getPaintProperty(id,'line-width')}catch(e){cartoonOrig[id]=undefined}}
+    const w0=cartoonOrig[id];if(w0!==undefined&&w0!==null)paint(id,'line-width',cartoonScale(w0,casing?1.5:1.35));
+    lay(id,'line-cap','round');lay(id,'line-join','round')}}
+function cartoonStop(){cartoonRun++;
+  if(cartoonL){try{map.removeLayer(cartoonL)}catch(e){}cartoonL=null}
+  try{map.attributionControl.removeAttribution(CARTOON.attr)}catch(e){}}
+function cartoonFail(run){ // silent fallback to the raster maps
+  if(run!==cartoonRun)return;
+  cartoonStop();S.cartoon=false;save('cartoon');
+  const b=$('#mCartoon');if(b)b.classList.remove('on');
+  toast(T('cartoonFail'));setBase()}
+function cartoonStart(){
+  if(!S.cartoon||cartoonL)return;
+  const run=++cartoonRun;let done=false,timer=null;
+  const bad=()=>{if(done)return;done=true;clearTimeout(timer);cartoonFail(run)};
+  let p;try{p=Promise.resolve(CARTOON.load())}catch(e){p=Promise.reject(e)}
+  p.then(()=>{
+    if(run!==cartoonRun||!S.cartoon)return;
+    const layer=L.maplibreGL({style:CARTOON.style,padding:.15,interactive:false,fadeDuration:0,pixelRatio:Math.min(window.devicePixelRatio||1,3)});
+    layer.addTo(map);cartoonL=layer;
+    const gm=layer.getMaplibreMap();
+    timer=setTimeout(bad,CARTOON.timeout);
+    gm.on('error',ev=>{if(!done)bad()});
+    gm.once('load',()=>{
+      if(done||run!==cartoonRun)return;done=true;clearTimeout(timer);
+      cartoonRestyle();
+      map.attributionControl.addAttribution(CARTOON.attr);
+      // the vector layer is ready: retire the raster layers
+      if(baseL){map.removeLayer(baseL);baseL=null}if(refL){map.removeLayer(refL);refL=null}
+      tileOk++;document.getElementById('boot').classList.add('ok')});})
+   .catch(bad)}
+function setCartoon(on){S.cartoon=!!on;save('cartoon');
+  if(S.cartoon){toast(T('cartoonLoad'));cartoonStart()}
+  else{cartoonStop();cartoonOrig={};setBase()}}
 function setTraffic(){if(trafficL){map.removeLayer(trafficL);trafficL=null}if(S.traffic&&S.tomtom){trafficL=L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${encodeURIComponent(S.tomtom)}&tileSize=256`,{maxZoom:20,opacity:.85,zIndex:5,attribution:'Traffic © TomTom'}).addTo(map)}$('#btnLayers').classList.toggle('on',!!trafficL)}
 let radarL=null;
 async function setRadar(){if(radarL){map.removeLayer(radarL);radarL=null}if(!S.radar)return;
@@ -1060,11 +1148,13 @@ $('#btnLocate').onclick=()=>{startWatch();st.follow=true;applyView();if(st.here)
 function modal(html){const m=$('#modal');m.innerHTML=`<div class="card">${html}</div>`;m.classList.remove('hidden');m.onclick=e=>{if(e.target===m||e.target.closest('[data-close]'))m.classList.add('hidden')}}
 $('#btnLayers').onclick=()=>{modal(`<h3>${T('layers')}</h3>
   <div class="tog"><span>${T('thLabel')}</span><div class="seg" style="width:240px">${['auto','light','dark'].map(k=>`<button data-th="${k}" class="${S.theme===k?'on':''}">${T('th'+k[0].toUpperCase()+k.slice(1))}</button>`).join('')}</div></div>
+  <div class="tog"><span>${T('cartoon')}</span><button class="sw ${S.cartoon?'on':''}" id="mCartoon"></button></div>
   <div class="tog"><span>${T('radar')}</span><button class="sw ${S.radar?'on':''}" id="mRadar"></button></div>
   <div class="tog"><span>${T('traffic')}</span><button class="sw ${S.traffic?'on':''}" id="mTraffic"></button></div>
   <div class="muted">${T('ttKey')}</div><input class="field" id="mKey" value="${esc(S.tomtom===TT_DEFAULT?'':S.tomtom)}" placeholder="${S.tomtom===TT_DEFAULT?'✓ TomTom built in':'API key'}">
   <div style="margin-top:14px;text-align:right"><button class="btn s" data-close>${T('close')}</button></div>`);
   document.querySelectorAll('[data-th]').forEach(b=>b.onclick=()=>{S.theme=b.dataset.th;save('theme');applyTheme();document.querySelectorAll('[data-th]').forEach(x=>x.classList.toggle('on',x===b))});
+  $('#mCartoon').onclick=e=>{setCartoon(!S.cartoon);e.target.classList.toggle('on',S.cartoon)};
   $('#mRadar').onclick=e=>{S.radar=!S.radar;save('radar');e.target.classList.toggle('on',S.radar);setRadar()};
   $('#mTraffic').onclick=e=>{S.traffic=!S.traffic;save('traffic');e.target.classList.toggle('on',S.traffic);setTraffic()};
   $('#mKey').onchange=async e=>{S.tomtom=e.target.value.trim();save('tomtom');ttWarned=false;
