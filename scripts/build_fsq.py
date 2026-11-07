@@ -66,12 +66,25 @@ def normalise_words(name: str) -> list[str]:
     return [w for w in re.split(r"[^a-z0-9]+", s) if w]
 
 
+MAX_KEY_WORDS = 3  # only the first N searchable words of a name get a shard entry (keeps the index small)
+DROP_CATS = frozenset([
+    "College Classroom", "College Academic Building", "College Lab", "College Residence Hall",
+    "College Student Center", "Student Center", "Structure", "Road", "Housing Development",
+    "Miscellaneous Store", "Food Truck", "Home (private)", "Residential Building",
+])
+CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+
+
 def keys_for(words: list[str]) -> set[str]:
     keys = set()
+    n = 0
     for w in words:
         if len(w) < 2 or w in STOPWORDS:
             continue
         keys.add(w[:4] if len(w) >= 4 else w)
+        n += 1
+        if n >= MAX_KEY_WORDS:
+            break
     return keys
 
 
@@ -99,6 +112,7 @@ def build_records(rows) -> tuple[list[dict], int]:
     """Turn query rows into records with keys. Returns (records, places_without_keys)."""
     records: list[dict] = []
     no_keys = 0
+    dropped_noise = 0
     for pid, name, lat, lon, address, locality, region, labels in rows:
         name = name.strip()
         words = normalise_words(name)
@@ -107,10 +121,17 @@ def build_records(rows) -> tuple[list[dict], int]:
             no_keys += 1
             continue
         addr = (address or "").strip()
-        area = (locality or region or "").strip()
+        area = (locality or "").strip()
+        if not area or CJK_RE.search(area):
+            area = (region or "").strip()
+            if CJK_RE.search(area):
+                area = ""
         cat = ""
         if labels and labels[0]:
             cat = str(labels[0]).split(">")[-1].strip()
+        if cat in DROP_CATS or (not cat and not area and not addr):
+            dropped_noise += 1
+            continue
         records.append({
             "pid": pid,
             "name": name,
@@ -124,7 +145,7 @@ def build_records(rows) -> tuple[list[dict], int]:
         })
     # Rows with address/area first, so the dedupe keeps the richer copy and the cap keeps it.
     records.sort(key=lambda r: (not r["has_info"], str(r["pid"])))
-    return records, no_keys
+    return records, no_keys + dropped_noise
 
 
 def dedupe(records: list[dict]) -> tuple[list[dict], int]:
@@ -158,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build Foursquare Malaysia search shards.")
     ap.add_argument("--out", required=True, type=Path, help="output directory")
     ap.add_argument("--release", help="release date YYYY-MM-DD (default: newest on S3)")
+    ap.add_argument("--keys-in-index", action="store_true", help="list every shard key in index.json (large; the app does not need it)")
     ap.add_argument("--input", help="parquet file, glob or directory to read instead of S3")
     args = ap.parse_args(argv)
 
@@ -237,7 +259,8 @@ def main(argv: list[str] | None = None) -> int:
         "built": dt.datetime.now(dt.timezone.utc).date().isoformat(),
         "release": label,
         "n": places_out,
-        "keys": {k: rows_n for k, rows_n, _, _ in shard_stats},
+        "nkeys": len(shard_stats),
+        "keys": {k: rows_n for k, rows_n, _, _ in shard_stats} if args.keys_in_index else {},
     }
     (out / "index.json").write_text(json.dumps(index, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
 
@@ -248,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"shards:                {len(shard_stats)}")
     print(f"total raw bytes:       {total_raw:,}")
     print(f"total gzip -9 bytes:   {total_gz:,}")
-    print(f"dropped, no searchable words: {no_keys}")
+    print(f"dropped (no searchable words / noise categories): {no_keys}")
     print(f"dropped, dedupe (<= {DEDUPE_METERS:.0f} m, same name): {dropped_dedupe}")
     print(f"dropped, shard cap ({MAX_ROWS} rows): {capped_entries} shard entries, "
           f"{dropped_cap_places} places missing from every shard")

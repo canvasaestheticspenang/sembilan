@@ -434,7 +434,8 @@ function pickKey(query, keysIndex) {
   for (const tok of sigWords(query)) {
     if (tok.length < 3) continue;
     const k = keyOf(tok);
-    if (!Object.prototype.hasOwnProperty.call(keysIndex, k)) continue;
+    const noList = !Object.keys(keysIndex).length;
+    if (!noList && !Object.prototype.hasOwnProperty.call(keysIndex, k)) continue;
     const count = Number(keysIndex[k]) || 0;
     if (!best || tok.length > best.len || (tok.length === best.len && count < best.count)) {
       best = { key: k, len: tok.length, count };
@@ -489,24 +490,21 @@ async function searchPlaces(query, center, opts) {
   if (sq.length) qTokens = sq;
   if (!qTokens.length) return [];
 
-  let index;
-  try {
-    index = await opts.getIndex();
-  } catch (e) {
-    return [];
+  const keyList = [];
+  const seenK = new Set();
+  sigWords(String(query)).filter(t => t.length >= 3).sort((a, b) => b.length - a.length).forEach(t => {
+    const k = keyOf(t);
+    if (!seenK.has(k)) { seenK.add(k); keyList.push(k); }
+  });
+  let key = null, rows = null, items = [];
+  for (const k of keyList.slice(0, 3)) {
+    let r;
+    try { r = await opts.getShard(k); } catch (e) { r = null; }
+    if (!Array.isArray(r) || !r.length) continue;
+    const its = fsqPrepare(k, r);
+    if (its.some(it => fsqMatches(it.words, qTokens))) { key = k; rows = r; items = its; break; }
   }
-  const key = pickKey(String(query), index && index.keys);
   if (!key) return [];
-
-  let rows;
-  try {
-    rows = await opts.getShard(key);
-  } catch (e) {
-    return [];
-  }
-  if (!Array.isArray(rows)) return [];
-
-  const items = fsqPrepare(key, rows);
   const qNorm = qTokens.join(' ');
   const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
 
