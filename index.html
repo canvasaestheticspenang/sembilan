@@ -492,7 +492,7 @@ async function searchPlaces(query, center, opts) {
 
   const keyList = [];
   const seenK = new Set();
-  sigWords(String(query)).filter(t => t.length >= 3).sort((a, b) => b.length - a.length).forEach(t => {
+  sigWords(String(query)).filter(t => t.length >= 2).sort((a, b) => b.length - a.length).forEach(t => {
     const k = keyOf(t);
     if (!seenK.has(k)) { seenK.add(k); keyList.push(k); }
   });
