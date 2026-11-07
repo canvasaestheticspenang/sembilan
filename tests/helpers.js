@@ -143,7 +143,7 @@ const notFound = () => ({ ok: false, status: 404, json: async () => { throw new 
 async function bootApp(opts = {}) {
   const cfg = {
     rider: false, withDB: true, overpassFails: false, rainAt: 0.8,
-    route: 'demo', overpass: 'fixed', start: DEFAULT_START, storage: {}, ...opts,
+    route: 'demo', overpass: 'fixed', start: DEFAULT_START, ...opts, storage: { cartoon: false, ...(opts.storage || {}) },
   };
   const { page, app } = readAppParts();
 
@@ -260,7 +260,7 @@ async function bootApp(opts = {}) {
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,meS,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer}};`);
+  w.eval(`${app}\n;window.__app={map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,MAP_THEMES,cartoonPal,meS,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer}};`);
   w.__said = said;
 
   const ctx = {

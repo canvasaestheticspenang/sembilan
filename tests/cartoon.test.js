@@ -40,9 +40,9 @@ function installFake(ctx, { fail } = {}) {
 }
 
 describe('cartoon map (experimental)', () => {
-  it('is off by default and the layers menu offers it', { timeout: TIMEOUT }, async () => {
+  it('is on by default in the app, and the layers menu can switch it off', { timeout: TIMEOUT }, async () => {
     await withApp({}, async (ctx) => {
-      assert.equal(ctx.app.S.cartoon, false);
+      assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8'), /cartoon:store\.get\('cartoon',true\)/);
       ctx.document.querySelector('#btnLayers').click();
       assert.ok(ctx.document.querySelector('#mCartoon'), 'switch exists');
       assert.equal(ctx.document.querySelector('#mCartoon').classList.contains('on'), false);
@@ -102,6 +102,26 @@ describe('cartoon map (experimental)', () => {
       assert.equal(ctx.app.S.cartoon, false);
       assert.match(ctx.document.querySelector('#toast').textContent, /Cartoon map could not load/);
       assert.equal(ctx.app.map.hasLayer(made[0]), false);
+    });
+  });
+
+  it('offers five map themes that recolour the vector map and are remembered', { timeout: TIMEOUT }, async () => {
+    await withApp({}, async (ctx) => {
+      const { gm, made } = installFake(ctx);
+      assert.deepEqual(Object.keys(ctx.app.MAP_THEMES), ['cartoon', 'candy', 'forest', 'sunset', 'neon']);
+      ctx.document.querySelector('#btnLayers').click();
+      ctx.document.querySelector('#mCartoon').click();
+      await ctx.waitFor(() => made.length === 1, { what: 'the vector layer' });
+      gm.emit('load');
+      ctx.document.querySelector('#btnLayers').click();
+      const chips = ctx.document.querySelectorAll('[data-mt]');
+      assert.equal(chips.length, 5);
+      gm.painted.length = 0;
+      ctx.document.querySelector('[data-mt="neon"]').click();
+      assert.equal(ctx.app.S.mapTheme, 'neon');
+      assert.equal(ctx.app.store.get('mapTheme', null), 'neon');
+      const bg = gm.painted.find((x) => x[0] === 'background');
+      assert.equal(bg && bg[2], ctx.app.MAP_THEMES.neon.light.land);
     });
   });
 });
