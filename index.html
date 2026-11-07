@@ -53,7 +53,10 @@ input{font:inherit;color:var(--fg)}
 
 /* bottom sheet */
 #sheet{position:fixed;left:0;right:0;bottom:0;z-index:950;max-height:58vh;overflow:auto;border-radius:18px 18px 0 0;padding:6px 14px calc(14px + env(safe-area-inset-bottom));max-width:560px;margin:0 auto;background:var(--card);box-shadow:0 -6px 24px rgba(15,23,42,.14)}
-#sheet .grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 10px}
+#sheet .grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 10px;position:relative;touch-action:none;cursor:pointer}
+#sheet .grab::after{content:'';position:absolute;left:-70px;right:-70px;top:-14px;bottom:-14px}
+#sheet{transition:max-height .18s ease}
+#sheet.min{max-height:calc(62px + env(safe-area-inset-bottom));overflow:hidden}
 .rc{display:block;width:100%;text-align:left;border:1.5px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:8px}
 .rc.sel{border-color:var(--ac);background:rgba(15,118,110,.06)}
 .rc .l1{display:flex;align-items:baseline;gap:8px}
@@ -583,6 +586,7 @@ function arrow(s,size=52,col='currentColor'){const m=s.maneuver,t=m.type,mod=m.m
 /* ---------- bottom sheet ---------- */
 const sheet=$('#sheet');
 function renderSheet(loading){
+  if(st.dest!==st._sd){st._sd=st.dest;st.sheetMin=false}
   if(!st.dest){sheet.innerHTML=`<div class="grab"></div><div class="muted" style="padding:2px 2px 6px">${T('longPress')}</div>`;positionFabs();return}
   if(loading||!st.routes.length){sheet.innerHTML=`<div class="grab"></div>${loading?'<div class="spin"></div>':`<div class="muted">${T('routeFail')}</div>`}`;positionFabs();return}
   const now=Date.now();
@@ -616,7 +620,15 @@ sheet.addEventListener('click',e=>{const t=e.target;
   if(t.closest('#btnSave')){const d=st.dest,i=S.saved.findIndex(p=>p.lat===d.lat&&p.lon===d.lon);if(i>=0)S.saved.splice(i,1);else{S.saved.unshift({lat:d.lat,lon:d.lon,name:d.name,sub:d.sub||''});toast(T('savedOk'))}save('saved');renderSheet();return}
   const tab=t.closest('.tab');if(tab){st.poiTab=tab.dataset.t;renderSheet();drawPois();return}
   const pi=t.closest('.pi[data-p]');if(pi){const p=st.routes[st.sel].pois[+pi.dataset.p];map.setView([p.lat,p.lon],16);return}});
-function positionFabs(){requestAnimationFrame(()=>{const h=document.body.classList.contains('navigating')?$('#navBot').offsetHeight:sheet.offsetHeight;$('#fabs').style.bottom=`calc(${h+14}px)`})}
+/* Drag/tap the handle to minimise the sheet so it stops covering the map */
+let gy=null;
+sheet.addEventListener('pointerdown',e=>{if(!e.target.closest('.grab'))return;gy={y:e.clientY,moved:false};try{sheet.setPointerCapture(e.pointerId)}catch(_){}});
+sheet.addEventListener('pointermove',e=>{if(gy&&Math.abs(e.clientY-gy.y)>8)gy.moved=true});
+sheet.addEventListener('pointerup',e=>{if(!gy)return;const d=e.clientY-gy.y,mv=gy.moved;gy=null;
+  if(!mv)st.sheetMin=!st.sheetMin;else if(d>20)st.sheetMin=true;else if(d<-20)st.sheetMin=false;else return;positionFabs()});
+sheet.addEventListener('pointercancel',()=>{gy=null});
+function applySheetMin(){sheet.classList.toggle('min',!!st.sheetMin&&!!st.dest)}
+function positionFabs(){applySheetMin();requestAnimationFrame(()=>{const h=document.body.classList.contains('navigating')?$('#navBot').offsetHeight:sheet.offsetHeight;$('#fabs').style.bottom=`calc(${h+14}px)`})}
 
 /* ---------- voice ---------- */
 let voices=[];function loadVoices(){voices=speechSynthesis?speechSynthesis.getVoices():[]}

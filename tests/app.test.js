@@ -201,3 +201,22 @@ describe('unit: instructions and search results', () => {
     });
   });
 });
+
+describe('bottom sheet', () => {
+  it('can be minimised by tapping or dragging the handle, and re-opens for a new destination', { timeout: TIMEOUT }, async () => {
+    await withApp({ rider: false, withDB: true }, async (ctx) => {
+      await ctx.search('gurney');
+      const sheet = ctx.document.querySelector('#sheet');
+      const fire = (type, y) => ctx.document.querySelector('#sheet .grab').dispatchEvent(new ctx.window.MouseEvent(type, { bubbles: true, clientY: y }));
+      assert.ok(!sheet.classList.contains('min'), 'open at first');
+      fire('pointerdown', 100); fire('pointerup', 100);
+      assert.ok(sheet.classList.contains('min'), 'tap on the handle minimises');
+      fire('pointerdown', 100); fire('pointerup', 100);
+      assert.ok(!sheet.classList.contains('min'), 'tap again opens');
+      fire('pointerdown', 100); fire('pointermove', 160); fire('pointerup', 160);
+      assert.ok(sheet.classList.contains('min'), 'dragging down minimises');
+      fire('pointerdown', 160); fire('pointermove', 90); fire('pointerup', 90);
+      assert.ok(!sheet.classList.contains('min'), 'dragging up opens');
+    });
+  });
+});
