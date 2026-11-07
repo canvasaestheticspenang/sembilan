@@ -76,14 +76,18 @@ CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 
 
 def keys_for(words: list[str]) -> set[str]:
-    """Shard keys for a name: its MAX_KEY_WORDS longest searchable words (the most distinctive ones)."""
-    cand = []
-    for i, w in enumerate(words):
-        if len(w) < 2 or w in STOPWORDS:
-            continue
-        cand.append((-len(w), i, w))
-    cand.sort()
-    return {w[:4] if len(w) >= 4 else w for _, _, w in cand[:MAX_KEY_WORDS]}
+    """Shard keys for a name, in priority order: the first searchable word (usually the brand),
+    then the longest remaining word (usually the most distinctive); MAX_KEY_WORDS in total."""
+    cand = [w for w in words if len(w) >= 2 and w not in STOPWORDS]
+    if not cand:
+        return set()
+    picked = [cand[0]]
+    rest = sorted(range(1, len(cand)), key=lambda i: (-len(cand[i]), i))
+    for i in rest:
+        if len(picked) >= MAX_KEY_WORDS:
+            break
+        picked.append(cand[i])
+    return {w[:4] if len(w) >= 4 else w for w in picked}
 
 
 def dist_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
