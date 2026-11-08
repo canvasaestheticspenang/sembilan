@@ -521,3 +521,85 @@ describe('back button guard', () => {
     });
   });
 });
+
+describe('landmarks: category words, locality, name variants and campus rows', () => {
+  const C = { lat: 3.139, lon: 101.687 };   // Kuala Lumpur centre
+  const lmRows = [
+    ['Universiti Malaya (UM)', 3.12033, 101.65032, 'education', ['um', 'um kl', 'universiti malaya', 'university of malaya']],
+    ['Hospital Kuala Lumpur (HKL)', 3.1719, 101.7021, 'hospital', ['hkl', 'hospital kuala lumpur']],
+    ['Sunway College, Subang Jaya', 3.068, 101.604, 'education', ['sunway college']],
+    ['LRT Universiti', 3.11449, 101.66205, 'rail', ['universiti lrt']],
+  ];
+  // Shard rows: [name, lat, lon, locality, cat]
+  const umShard = [
+    ['DK3 & DK4 sains universiti malaya kuala lumpur', 3.11909, 101.65618, 'Kuala Lumpur', 'University'],
+    ['Universiti Malaya (University of Malaya)', 3.12119, 101.65683, 'Kuala Lumpur', 'University'],
+    ['Kafe Fakulti Undang-Undang Universiti Malaya', 3.11796, 101.66125, 'Kuala Lumpur', 'Café'],
+  ];
+  const search = (ctx, q, rows, centre = C) => ctx.app.searchPlaces(q, centre, {
+    getIndex: async () => ({}), getShard: async () => rows, limit: 8, landmarks: ctx.app.getLandmarks,
+  });
+
+  it('landmark slugs are read as words: education by name, hospital, rail by line', { timeout: TIMEOUT }, async () => {
+    await withApp({ landmarks: lmRows }, async (ctx) => {
+      const lms = await ctx.app.getLandmarks();
+      const cat = (name) => lms.find((m) => m.name === name).cat;
+      assert.equal(cat('Universiti Malaya (UM)'), 'University');
+      assert.equal(cat('Sunway College, Subang Jaya'), 'College');
+      assert.equal(cat('Hospital Kuala Lumpur (HKL)'), 'Hospital');
+      assert.equal(cat('LRT Universiti'), 'Light Rail Station');
+    });
+  });
+
+  it('a bare alias with the locality typed ("um kuala lumpur") finds the curated landmark first', { timeout: TIMEOUT }, async () => {
+    await withApp({ landmarks: lmRows }, async (ctx) => {
+      const r = await search(ctx, 'um kuala lumpur', umShard);
+      assert.equal(r[0].name, 'Universiti Malaya (UM)', 'landmark first: ' + r.map((p) => p.name));
+      assert.equal(r[0].lm, true);
+      assert.equal(r[0].cat, 'University', 'shown as University');
+    });
+  });
+
+  it('a campus landmark absorbs its own sub-units within 1 km, but keeps a same-place name variant', { timeout: TIMEOUT }, async () => {
+    const rows = [
+      ['Hospital Kuala Lumpur', 3.17068, 101.70459, '', 'Hospital'],                       // same name, 0.3 km: one place
+      ['Wad 13 (Pembedahan), Hospital Kuala Lumpur', 3.1720, 101.7025, '', 'Hospital Unit'], // a ward of it
+      ['Hospital Kuala Lumpur Parking', 3.2200, 101.7600, '', 'Parking'],                  // 5 km away: not a sub-unit
+    ];
+    await withApp({ landmarks: lmRows }, async (ctx) => {
+      const r = await search(ctx, 'hospital kuala lumpur', rows);
+      const near = r.filter((p) => Math.abs(p.lat - 3.1719) < 0.01 && Math.abs(p.lon - 101.7021) < 0.01);
+      assert.equal(near.length, 1, 'one row for the campus: ' + r.map((p) => p.name));
+      assert.equal(near[0].lm, true, 'the landmark, with its own name and coordinates');
+      assert.equal(near[0].name, 'Hospital Kuala Lumpur (HKL)');
+      assert.ok(r.some((p) => p.name === 'Hospital Kuala Lumpur Parking'), 'a row 5 km away is kept');
+    });
+  });
+
+  it('a row named as the landmark with another name in brackets is kept (name variant)', { timeout: TIMEOUT }, async () => {
+    await withApp({ landmarks: lmRows }, async (ctx) => {
+      const r = await search(ctx, 'universiti malaya', umShard);
+      assert.ok(r.some((p) => p.name === 'Universiti Malaya (University of Malaya)'), 'variant row kept: ' + r.map((p) => p.name));
+    });
+  });
+
+  it('a category bonus does not lift a landmark far from the rider', { timeout: TIMEOUT }, async () => {
+    const far = [['Pavilion Kuala Lumpur', 3.1487, 101.713, 'mall', ['pavilion']], ['Paradigm Mall Petaling Jaya', 3.1051, 101.5957, 'mall', ['paradigm mall pj']]];
+    const jb = [['Paradigm Mall', 1.51578, 103.68539, 'Johor Bahru', 'Shopping Mall']];
+    await withApp({ landmarks: far }, async (ctx) => {
+      const r = await search(ctx, 'paradigm mall', jb, { lat: 1.4927, lon: 103.7414 });
+      assert.equal(r[0].name, 'Paradigm Mall', 'the Johor mall first: ' + r.map((p) => p.name));
+    });
+  });
+
+  it('a category-only query prefers rows near the rider over far landmarks of the category', { timeout: TIMEOUT }, async () => {
+    const mosques = [['Masjid Zahir, Alor Setar', 6.12037, 100.36525, 'religion', []], ['Masjid Kapitan Keling, George Town', 5.41661, 100.33759, 'religion', []]];
+    const near = [['Surau Cosmopoint Penang', 5.41605, 100.33085, '', 'Mosque'], ['Surau KWSP', 5.42353, 100.33023, '', 'Mosque']];
+    await withApp({ landmarks: mosques }, async (ctx) => {
+      const r = await search(ctx, 'surau', near, { lat: 5.4141, lon: 100.3288 });
+      assert.ok(r.slice(0, 2).every((p) => !/Alor Setar/.test(p.name)), 'no far mosque in the top two: ' + r.map((p) => p.name));
+      const lm = await ctx.app.getLandmarks();
+      assert.equal(lm.find((m) => /Alor Setar/.test(m.name)).cat, 'Mosque', 'religion slug read as Mosque by name');
+    });
+  });
+});
