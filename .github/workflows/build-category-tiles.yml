@@ -1,0 +1,60 @@
+name: Build category tiles
+
+# Builds data/cat/ (category-only search tiles) from the shards in data/places/.
+# Run the "Build places index" workflow first so data/places/ exists.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: places-data
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check places shards exist
+        run: |
+          if ! find data/places -name '*.json' -print -quit | grep -q .; then
+            echo "data/places/ has no shard files. Run the 'Build places index' workflow first." >&2
+            exit 1
+          fi
+
+      - name: Build category tiles
+        # Stdlib only, no pip install. Defaults: --tile 0.2 --fine 0.1; index.html is read from the repo root.
+        run: |
+          rm -rf data/cat
+          python scripts/build_category_tiles.py data/places data
+
+      - name: Check that category intents were written
+        # An empty manifest means no shard row carried a category (position 4), so fail instead of committing nothing.
+        run: |
+          python - <<'PY'
+          import json, sys
+          m = json.load(open('data/cat/manifest.json', encoding='utf8'))
+          if not m.get('intents'):
+              sys.exit('no category intents written: check that the shard rows carry a category in position 4')
+          print('category intents:', len(m['intents']))
+          PY
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A data/cat
+          if ! git diff --cached --quiet; then
+            git commit -m "Update category tiles"
+            git push
+          fi
