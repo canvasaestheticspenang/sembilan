@@ -1325,6 +1325,8 @@ function fsqCatAdj(row, hit) {
 const FSQ_NAME_BONUS_KM = 3;        // a row whose name spells the query's own word counts this much nearer
 const FSQ_LM_WEAK = 1.0;            // score taken off a landmark matched only through a weak alias ("station")
 const FSQ_LM_BASE = 0.4;            // curated landmark bonus on the shard scale
+const FSQ_LM_INTENT_KM = 50;        // a landmark gets the category bonus only within this distance of the map centre
+const FSQ_CAMPUS_CAT = /^(hospital|university|college)$/i;   // landmarks whose wards, faculties and departments are indexed as rows of their own
 const FSQ_CATONLY_FLAT = true;      // category-only queries: every name tier counts the same (the typed words name a category, not a name)
 const FSQ_NONCAT_DEMOTE = 1.5;      // category named: name-only strict rows drop this much
 let catManP = null;
@@ -2027,26 +2029,39 @@ async function searchPlaces(query, center, opts) {
   if (opts.landmarks && (req.length || P.catOnly)) {
     let lms = [];
     try { lms = await opts.landmarks(); } catch (e) { lms = []; }
+    const lmName = nameTk.length ? nameTk : req;          // words the landmark name (or an alias) must carry
+    const lmLoc = nameTk.length ? locTk : [];             // locality words, which may be missing when the landmark is close
+    // The whole typed name, category words included, without locality words: "subang airport" equals that alias exactly.
+    const lmNameNorm = fsqCanon(normWords(query == null ? '' : String(query)).filter(w => !FSQ_STOPWORDS.has(w) && !FSQ_LOC.has(w)).join(' '));
     for (const m of lms) {
       let best = 0, weakOnly = false;
       if (!req.length) {   // category only: the name carries one of the forms, or the landmark's category is the intent
         if (P.categoryIntent && P.categoryIntent.test(String(m.cat || ''))) best = 1;
         if (P.nameRe && m.vs.some(v => P.nameRe.test(v.w.join(' ')))) best = 2.5;
       }
+      // Same rule as the shard rows (hit): the name words must match; locality words ("kuala lumpur", "jb") may be
+      // left out of the landmark name when it lies within FSQ_LOC_KM of the map centre, but then the typed phrase must
+      // sit in the name (q >= 2) or be the name itself.
+      const lmClose = hasCenter && lmLoc.length > 0 && haversineKm(center, m) <= FSQ_LOC_KM;
       for (const v of req.length ? m.vs : []) {
-        const strict = req.every(tk => fsqTokHitStrict(v.w, tk));
-        if (!strict && !req.every(tk => fsqTokHit(v.w, tk))) continue;
-        const q = Math.max(...qns.map(x => fsqQuality(v.n, x)));
+        const strict = lmName.every(tk => fsqTokHitStrict(v.w, tk));
+        if (!strict && !lmName.every(tk => fsqTokHit(v.w, tk))) continue;
+        const locIn = lmLoc.every(tk => fsqTokHit(v.w, tk));
+        if (!locIn && !lmClose) continue;
+        let q = Math.max(...qns.map(x => fsqQuality(v.n, x)));
+        if (lmNameNorm && v.n === lmNameNorm) q = 3;          // the typed name is this name or alias exactly ("um", "hkl")
+        if (!locIn && q < 2) continue;
         if (strict && (!best || weakOnly || q > best)) { best = q; weakOnly = false; }
         else if (!strict && !best) { best = q; weakOnly = true; }
       }
       if (!best) continue;
       const norm = m.norm || (m.norm = normWords(m.name).join(' '));
       const cat = String(m.cat || '');
-      const intentL = P.categoryIntent ? P.categoryIntent.test(cat) : (!!P.nameRe && P.nameRe.test(norm));
       const d = hasCenter ? haversineKm(center, m) : null;
+      // a category bonus only for landmarks in the rider's region: a "mall" typed in Johor must not lift a mall in Selangor
+      const intentL = (P.categoryIntent ? P.categoryIntent.test(cat) : (!!P.nameRe && P.nameRe.test(norm))) && (d == null || d <= FSQ_LM_INTENT_KM);
       const score = best + FSQ_LM_BASE + (best >= 2.5 ? 0.6 : 0) + (intentL ? 0.8 : 0) - (weakOnly ? FSQ_LM_WEAK : 0) - (d == null ? 0 : bias * 0.8 * d / (d + 300));
-      scored.push({ lm: true, lat: m.lat, lon: m.lon, name: m.name, norm, cat, row: null, d, score });
+      scored.push({ lm: true, lat: m.lat, lon: m.lon, name: m.name, norm, base: m.base || norm, vn: m.vs.map(v => v.n), cat, row: null, d, score });
     }
   }
   if (!scored.length) return [];
@@ -2060,18 +2075,40 @@ async function searchPlaces(query, center, opts) {
   });
 
   // Duplicates: the same normalised name within 150 m of a kept one (250 m when a landmark is involved),
-  // or a name that contains the kept name within 40 m of it.
+  // a landmark and a shard row whose names agree once a landmark's bracketed part is dropped ("Hospital X" and
+  // "Hospital X (HKL)") within 500 m, or a name that contains the kept name within 40 m of it.
+  // A duplicate pair keeps the landmark, so the curated name and coordinates are the ones shown.
+  // A hospital or university landmark also absorbs the shard rows of its own campus (wards, faculties, departments)
+  // whose names carry the landmark's name, within 1 km: the rider sees the campus once.
+  const samePlace = (o, s) => {
+    const dm = haversineKm(o, s) * 1000;
+    if (o.norm === s.norm) return dm < ((o.lm || s.lm) ? 250 : 150);
+    if ((o.lm || s.lm) && dm < 500 && (o.base || o.norm) === (s.base || s.norm)) return true;
+    if (o.lm !== s.lm) {
+      const L = o.lm ? o : s, X = o.lm ? s : o;
+      // "Name (other name)" where the bracket is one of the landmark's own names or aliases is the same place under
+      // another name (kept as it is, see the 500 m rule above); any other row carrying the name is a sub-unit
+      const xm = /^(.*?)\(([^()]*)\)\s*$/.exec(String(X.name || ''));
+      const variant = !!xm && normWords(xm[1]).join(' ') === L.base && (L.vn || []).includes(fsqCanon(normWords(xm[2]).join(' ')));
+      if (FSQ_CAMPUS_CAT.test(String(L.cat || '')) && dm < 1000 && !variant && (' ' + X.norm + ' ').indexOf(' ' + L.base + ' ') >= 0) return true;
+    }
+    return dm < 40 && (o.norm.indexOf(s.norm) >= 0 || s.norm.indexOf(o.norm) >= 0);
+  };
+  scored.forEach((s, i) => { s.ord = i; });
   const kept = [];
   for (const s of scored) {
     if (kept.length >= limit) break;
-    const dup = kept.some(o => {
-      const dm = haversineKm(o, s) * 1000;
-      if (o.norm === s.norm) return dm < ((o.lm || s.lm) ? 250 : 150);
-      return dm < 40 && (o.norm.indexOf(s.norm) >= 0 || s.norm.indexOf(o.norm) >= 0);   // "Hospital X" and "Hospital X (HKL)" at one spot
-    });
-    if (dup) continue;
-    kept.push(s);
+    const dups = kept.filter(o => samePlace(o, s));
+    if (!dups.length) { kept.push(s); continue; }
+    if (!s.lm && dups.every(o => o.lm && s.score > o.score)) { kept.push(s); continue; }   // the row the query names outscores its campus: both stay
+    if (s.lm && dups.every(o => !o.lm)) {   // the curated landmark takes the place of the shard rows it duplicates
+      const score = Math.max(s.score, ...dups.map(o => o.score));
+      const ord = Math.min(s.ord, ...dups.map(o => o.ord));
+      dups.forEach(o => kept.splice(kept.indexOf(o), 1));
+      kept.push(Object.assign({}, s, { score, ord }));
+    }
   }
+  kept.sort((a, b) => a.ord - b.ord);
 
   return kept.map(s => ({
     name: s.name,
@@ -2091,7 +2128,16 @@ function getPlacesIdx(){if(!placesIdxP)placesIdxP=getJSON(PLACES_BASE+'index.jso
 function getPlacesShard(k){if(!placesShards.has(k))placesShards.set(k,getJSON(`${PLACES_BASE}${k}.json`,{},10000).catch(()=>[]));return placesShards.get(k)}
 /* Curated landmarks (airports, malls, stations, hospitals, universities...). Small file, searched by name and by the aliases people really type. */
 let lmP=null;
-function getLandmarks(){if(!lmP)lmP=getJSON(PLACES_BASE.replace(/places\/$/,'')+'landmarks.json',{},8000).then(a=>a.map(r=>{const vs=[r[0],...(r[4]||[])].map(v=>{const w=normWords(v);return{w,n:fsqCanon(w.join(' '))}}).filter(v=>v.w.length);return{name:r[0],lat:r[1],lon:r[2],cat:r[3],vs}})).catch(()=>[]);return lmP}
+// Landmark category slugs (data/landmarks.json) as the words a rider reads. Shown as the place's sub line and matched by category intents.
+const LM_CAT_LABEL={airport:'Airport',hospital:'Hospital',mall:'Shopping Mall',outlet:'Outlet Mall',bus:'Bus Station',ferry:'Ferry Terminal',toll:'Toll Plaza',police:'Police Station',hotel:'Hotel',resort:'Resort',market:'Market',night_market:'Night Market',hawker:'Hawker Centre',food_street:'Food Street',theme_park:'Theme Park',heritage:'Heritage Site',government:'Government Building',industry:'Industrial Area',border:'Border Crossing',bridge:'Bridge',attraction:'Attraction',neighbourhood:'Neighbourhood'};
+function landmarkCatLabel(slug,name){
+  const s=String(slug||''),n=String(name||'');
+  if(s==='education')return /univ|universiti|kampus|campus|\buni|unikl|\b(uitm|unimap|unimas|iium|uiam|usim|utp|utm|utem|umk|ums|ump|upm|usm|um|ukm|mmu|inti|apu|kdu|segi|tarc)\b/i.test(n)?'University':/college|kolej/i.test(n)?'College':'School';
+  if(s==='rail')return /\bLRT\b/.test(n)?'Light Rail Station':/\bMRT\b/.test(n)?'Metro Station':'Rail Station';
+  if(s==='religion')return /masjid|mosque|surau/i.test(n)?'Mosque':/kuil|temple|tokong|vihara/i.test(n)?'Temple':/gereja|church|cathedral/i.test(n)?'Church':'Place of Worship';
+  return LM_CAT_LABEL[s]||s;
+}
+function getLandmarks(){if(!lmP)lmP=getJSON(PLACES_BASE.replace(/places\/$/,'')+'landmarks.json',{},8000).then(a=>a.map(r=>{const vs=[r[0],...(r[4]||[])].map(v=>{const w=normWords(v);return{w,n:fsqCanon(w.join(' '))}}).filter(v=>v.w.length);return{name:r[0],lat:r[1],lon:r[2],cat:landmarkCatLabel(r[3],r[0]),vs,base:normWords(String(r[0]).replace(/\([^)]*\)/g,' ')).join(' ')}})).catch(()=>[]);return lmP}
 function riderAlongNow(){const n=st.nav;if(!n||!n.r||!Array.isArray(n.r.cum))return 0;return n.r.cum[n.last]||0}
 // Curated landmarks are scored with the shard rows (searchPlaces), not prepended.
 async function fsqSearch(q){const qz=zhToLatin(q);if(!normWords(qz).length)return[];const c=map.getCenter();
