@@ -130,6 +130,7 @@ const notFound = () => ({ ok: false, status: 404, json: async () => { throw new 
  * Options:
  *   rider          motorcycle mode on (default false)
  *   withDB         serve data/my-pois.json; false makes it 404 (default true)
+ *   cat            { manifest, tiles: {'<intent>/<latTile>_<lonTile>': {cats, rows}} } for data/cat/ (default: 404, no tiles)
  *   overpassFails  true: every Overpass request fails. Function (n, url) => bool:
  *                  decides per request, n = 0-based Overpass request counter
  *   rainAt         fraction (0..1) of the route where rain starts; > 1 means dry (default 0.8)
@@ -221,6 +222,14 @@ async function bootApp(opts = {}) {
     }
     if (url.includes('photon.komoot.io')) {
       return ok({ features: [{ geometry: { coordinates: [100.44, 5.36] }, properties: { name: 'Gurney Plaza', city: 'George Town' } }] });
+    }
+    // Category tiles (scripts/build_category_tiles.py) are optional: not committed, so 404 unless a test supplies them.
+    if (url.includes('data/cat/')) {
+      if (!cfg.cat) return notFound();
+      if (url.endsWith('data/cat/manifest.json')) return cfg.cat.manifest ? ok(cfg.cat.manifest) : notFound();
+      const m = url.match(/data\/cat\/([a-z_]+)\/(-?\d+_-?\d+)\.json/);
+      const t = m && cfg.cat.tiles && cfg.cat.tiles[m[1] + '/' + m[2]];
+      return t ? ok(t) : notFound();
     }
     if (url.includes('data/places/index.json')) {
       return cfg.places ? ok({ v: 1, keys: Object.fromEntries(Object.keys(cfg.places).map((k) => [k, cfg.places[k].length])) }) : notFound();

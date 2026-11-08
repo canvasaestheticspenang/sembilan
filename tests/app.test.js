@@ -380,6 +380,50 @@ describe('place index search: variants and landmarks', () => {
   });
 });
 
+describe('place index search: Chinese, Tamil and category-only queries', () => {
+  it('Chinese and Tamil place words are rewritten to Latin before the index lookup', { timeout: TIMEOUT }, async () => {
+    const air = [['Penang International Airport (PEN)', 5.29311, 100.2645, 'Bayan Lepas', 'International Airport']];
+    const mosque = [['Masjid Negeri', 5.4, 100.3, 'George Town', 'Mosque']];
+    await withApp({ places: { airp: air, pena: air, masj: mosque } }, async (ctx) => {
+      const A = ctx.app;
+      assert.deepEqual(A.zhToLatin('槟城机场').trim().split(/\s+/), ['penang', 'airport']);
+      assert.equal(A.zhToLatin('Penang Airport'), 'Penang Airport', 'Latin query unchanged');
+      assert.equal(A.zhToLatin('不认识'), '   ', 'unknown CJK is dropped, not searched');
+      assert.equal(A.zhToLatin('Gurney’s Plaza').replace(/\s+/g, ' ').trim(), 'Gurneys Plaza', 'curly apostrophe dropped as normWords does');
+      const r = await A.geocode('槟城机场');
+      assert.ok(/Penang International Airport/.test(r[0].name), 'CJK airport query: ' + r.map((p) => p.name));
+      const m = await A.geocode('mosque');
+      assert.ok(/Masjid Negeri/.test(m[0].name), 'English "mosque" reads the Malay "masjid" shard: ' + m.map((p) => p.name));
+    });
+  });
+
+  // A row whose name has no category word: only the category tiles can find it for "masjid".
+  const hidayah = [['Hidayah Prayer Hall', 5.4150, 100.3290, 'Penang', 'Mosque']];
+  const centre = { lat: 5.4141, lon: 100.3288 };   // tile 27_501 at 0.2 degrees
+  it('category-only query without tiles falls back to the name shards (no error, no tile request)', { timeout: TIMEOUT }, async () => {
+    await withApp({ places: { masj: [['Masjid Negeri', 5.4, 100.3, 'George Town', 'Mosque']] } }, async (ctx) => {
+      const r = await ctx.app.searchPlaces('masjid', centre, { getIndex: async () => ({}), getShard: async (k) => (k === 'masj' ? [['Masjid Negeri', 5.4, 100.3, 'George Town', 'Mosque']] : null), limit: 5 });
+      assert.equal(r.length, 1, 'name search only');
+      assert.equal(r[0].name, 'Masjid Negeri');
+    });
+  });
+  it('category-only query reads the nearest rows of the category from the tiles when they are published', { timeout: TIMEOUT }, async () => {
+    const cfg = { cat: { manifest: { tileDeg: 0.2, intents: { mosque: { tileDeg: 0.2 } } }, tiles: { 'mosque/27_501': { cats: ['Mosque'], rows: hidayah.map((r) => [r[0], r[1], r[2], r[3], 0]) } } } };
+    await withApp(cfg, async (ctx) => {
+      const r = await ctx.app.searchPlaces('masjid', centre, { getIndex: async () => ({}), getShard: async () => null, limit: 5 });
+      assert.equal(r[0].name, 'Hidayah Prayer Hall', 'found by category: ' + r.map((p) => p.name));
+      assert.equal(r[0].cat, 'Mosque');
+      assert.ok(r[0].dk < 300, 'distance in metres');
+    });
+  });
+  it('a missing tile or manifest never throws', { timeout: TIMEOUT }, async () => {
+    await withApp({ cat: { manifest: { tileDeg: 0.2, intents: { mosque: { tileDeg: 0.2 } } }, tiles: {} } }, async (ctx) => {
+      const r = await ctx.app.searchPlaces('masjid', centre, { getIndex: async () => ({}), getShard: async () => null, limit: 5 });
+      assert.equal(r.length, 0, 'no tile, no shard: empty, not an error');
+    });
+  });
+});
+
 describe('avatar and route look', () => {
   it('removes the uploaded face photo and falls back to the arrow', { timeout: TIMEOUT }, async () => {
     await withApp({}, async (ctx) => {
