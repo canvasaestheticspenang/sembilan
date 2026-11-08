@@ -944,7 +944,8 @@ async function fetchValhalla(o,d,alts){const cost=S.rider?'motorcycle':'auto';
   rs=rs.filter((r,i)=>!rs.slice(0,i).some(x=>sameRoute(x,r)));rs.sort((a,b)=>a.duration-b.duration);return rs.slice(0,4)}
 async function fetchRoutes(o,d,alts){
   try{return await fetchValhalla(o,d,alts)}catch(e){logEv('valFail',{m:errMsg(e)})}
-  if(alts&&(S.rider||S.avoidTolls))toast(T('carFallback'));
+  if(S.rider||(alts&&S.avoidTolls)){toast(T('carFallback'));/* the fallback router only knows cars: say so by voice too, once per trip, also on a reroute */
+    const n=st.nav;if(S.rider&&n&&!n.carWarned){n.carWarned=1;say(T('carFallbackV'))}}
   return fetchOsrm(o,d,alts)}
 async function fetchOsrm(o,d,alts){const base=`${OSRM}${o.lon},${o.lat};${d.lon},${d.lat}?overview=false&steps=true&geometries=geojson&alternatives=${alts?3:'false'}`;
   let j,tollFallback=false;const ex=[]; // the free OSRM server rejects 'exclude' (HTTP 400); re-enable with a routing server that supports it
@@ -1472,6 +1473,10 @@ const REL={MAX_AGE:3*3600e3,NEAR_M:1500,SAVE_MS:5000,RE_MIN:8000,MAX_ACC:60,OFF_
 Object.assign(I.ms,{resumeT:'Sambung perjalanan?',resumeQ:d=>`Perjalanan ke ${d} belum selesai. Sambung navigasi?`,resumeYes:'Sambung',resumeNo:'Buang',
   relOffline:'Tiada internet: tidak dapat kira semula laluan. Teruskan ke arah laluan.',relOfflineV:'Tiada sambungan. Tidak dapat mengira semula laluan. Sila kembali ke laluan.',
   relRetry:'Tidak dapat kira semula laluan. Mencuba lagi sebentar lagi.',relRetryV:'Laluan baharu belum dapat dikira. Sila kembali ke laluan.'});
+Object.assign(I.ms,{carFallbackV:'Amaran. Laluan baharu ini untuk kereta sahaja. Semak sendiri jalan yang melarang motosikal.'});
+Object.assign(I.en,{carFallbackV:'Warning. This new route is for cars only. Check for no-motorcycle roads yourself.'});
+Object.assign(I.zh,{carFallbackV:'注意。新路线仅适用于汽车，请自行留意禁行摩托车的路段。'});
+Object.assign(I.ta,{carFallbackV:'எச்சரிக்கை. இந்தப் புதிய வழி கார்களுக்கு மட்டும். மோட்டார் சைக்கிள் தடை சாலைகளை நீங்களே கவனியுங்கள்.'});
 Object.assign(I.zh,{scSet:'测速照相机提醒',scNote:'并非所有照相机都有列出，请遵守路牌。数据：© OpenStreetMap 贡献者 (ODbL)。',
   scBanner:(d,l,s)=>l!=null?`前方测速照相机 ${d} · 限速 ${l} · 您 ${s} 公里/时`:`前方测速照相机 ${d}`,
   scSay:(d,l,o)=>`前方${d}有测速照相机${l!=null?'，限速每小时'+l+'公里':''}${o?'。请减速':''}`,
