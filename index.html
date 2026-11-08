@@ -231,6 +231,8 @@ body.rider #btnShare{display:none}
 if(!window.L){document.getElementById('bootMsg').innerHTML='<b>Peta tidak dapat dimuatkan — tiada sambungan internet atau pratonton menyekatnya.</b><br>Map library blocked — no internet, or this preview blocks it.';throw new Error('Leaflet not loaded')}
 /* ---------- storage & settings ---------- */
 const store={get(k,d){try{const v=localStorage.getItem('s9_'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('s9_'+k,JSON.stringify(v))}catch(e){}}};
+// On-device pick memory (picks.js). Reads never throw; a failed write throws so pkWrite can retry smaller.
+const PICKS_STORE={getItem(k){try{return localStorage.getItem(k)}catch(e){return null}},setItem(k,v){localStorage.setItem(k,v)},removeItem(k){try{localStorage.removeItem(k)}catch(e){}}};
 const TT_DEFAULT='RCOJ7rhUpYA15gZDzjan9cXZHyjMXqUS'; // optional built-in TomTom key (restrict it to this site's domain in the TomTom dashboard)
 const S={view:store.get('view','h'),lang:store.get('lang','ms'),avoidTolls:store.get('avoidTolls',false),dark:false,theme:store.get('theme',store.get('dark',false)?'dark':'auto'),voice:store.get('voice',true),tomtom:(()=>{const v=store.get('tomtom',null);return v===null?TT_DEFAULT:v})(),traffic:store.get('traffic',false),saved:store.get('saved',[]),recent:store.get('recent',[]),rider:store.get('rider',false),radar:store.get('radar',false),family:store.get('family',''),avoidHwy:store.get('avoidHwy',false),cartoon:store.get('cartoon',true),mapTheme:store.get('mapTheme','cartoon'),avatar:store.get('avatar','arrow'),avatarImg:store.get('avatarImg',''),routeColor:store.get('routeColor','teal')};
 const save=k=>store.set(k,S[k]);
@@ -847,6 +849,507 @@ function fsqCatAdj(row) {
   return 0;
 }
 
+/* ---------- picks.js (on-device click learning) ---------- */
+/* picks.js - on-device click learning for place search.
+ * Remembers which result the rider picked for a query. Nothing leaves the device,
+ * places are identified by normalised name + coords (3 dp), no ids.
+ * Plain ES2020, no imports. Paste into index.html before searchPlaces is used.
+ * Every function takes an injected storage object (localStorage-like:
+ * getItem / setItem / removeItem). Blocked or corrupted storage never throws.
+ */
+
+const PK_KEY = 's9_picks';            // storage key, schema below
+const PK_VERSION = 1;                 // schema version; other versions are discarded
+const PK_MAX_ENTRIES = 300;           // (query, place) entries kept, LRU by last pick
+const PK_MAX_RECENT = 10;             // recent destinations list length
+const PK_HALF_LIFE_MS = 60 * 86400000; // boost halves every 60 days
+const PK_QUERY_MAX = 0.8;             // max boost from query history (before cap)
+const PK_RECENT_MAX = 0.2;            // max global boost for a recent destination
+const PK_MAX_BOOST = 1.0;             // total boost cap: never more than one tier
+const PK_PREFIX_MIN = 3;              // shorter query must be at least this long for prefix match
+const PK_PREFIX_WEIGHT = 0.6;         // weight of a prefix (not exact) query match
+const PK_MAX_QUERY_LEN = 80;
+
+let pkCache = { raw: null, data: null };  // parsed model reused while the raw text is unchanged
+
+// Normalised query/name: accents stripped, lower case, punctuation to spaces, collapsed.
+function pkNormQuery(s) {
+  if (typeof s !== 'string') return '';
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().slice(0, PK_MAX_QUERY_LEN).trim();
+}
+
+// Place identity without ids: normalised name + lat/lon rounded to 3 decimals.
+// Returns null for a place that cannot be identified.
+function pkPlaceKey(place) {
+  if (!place || typeof place !== 'object') return null;
+  const name = pkNormQuery(place.name);
+  const la = Number(place.lat);
+  const lo = Number(place.lon);
+  if (!name || !Number.isFinite(la) || !Number.isFinite(lo)) return null;
+  return name + '@' + la.toFixed(3) + ',' + lo.toFixed(3);
+}
+
+function pkEntryKey(q, p) {
+  return q + '\u0001' + p;
+}
+
+function pkEmpty() {
+  return { v: PK_VERSION, picks: Object.create(null), recent: [] };
+}
+
+// Read raw text from storage. Blocked or missing storage gives null.
+function pkRead(storage) {
+  try {
+    if (!storage || typeof storage.getItem !== 'function') return null;
+    const v = storage.getItem(PK_KEY);
+    return typeof v === 'string' ? v : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Parse and sanitise raw text. Anything malformed is dropped, never thrown.
+function pkParse(text) {
+  if (typeof text !== 'string' || !text) return pkEmpty();
+  let o;
+  try { o = JSON.parse(text); } catch (e) { return pkEmpty(); }
+  if (!o || typeof o !== 'object' || Array.isArray(o) || o.v !== PK_VERSION) return pkEmpty();
+  const out = pkEmpty();
+  const picks = o.picks && typeof o.picks === 'object' && !Array.isArray(o.picks) ? o.picks : {};
+  for (const k of Object.keys(picks)) {
+    const e = picks[k];
+    if (!e || typeof e !== 'object') continue;
+    const q = e.q, p = e.p, c = e.c, t = e.t;
+    if (typeof q !== 'string' || typeof p !== 'string' || !q || !p) continue;
+    if (!Number.isFinite(c) || c < 1 || !Number.isFinite(t)) continue;
+    out.picks[pkEntryKey(q, p)] = { q, p, c: Math.min(Math.floor(c), 1e6), t };
+  }
+  if (Array.isArray(o.recent)) {
+    for (const r of o.recent) {
+      if (r && typeof r.p === 'string' && r.p && Number.isFinite(r.t)) out.recent.push({ p: r.p, t: r.t });
+    }
+  }
+  out.recent = out.recent.slice(0, PK_MAX_RECENT);
+  return out;
+}
+
+// Load the model with a cache keyed on the raw text.
+function pkLoad(storage) {
+  const raw = pkRead(storage);
+  if (raw !== null && pkCache.data && raw === pkCache.raw) return pkCache.data;
+  const data = pkParse(raw);
+  pkCache = { raw, data };
+  return data;
+}
+
+function pkClone(data) {
+  return pkParse(JSON.stringify(data));
+}
+
+// Pure: drop least recently picked entries above maxEntries; trim recent list.
+// Mutates and returns the number of entries removed.
+function pkPruneModel(data, maxEntries) {
+  const cap = Number.isFinite(maxEntries) && maxEntries >= 0 ? Math.floor(maxEntries) : PK_MAX_ENTRIES;
+  const keys = Object.keys(data.picks);
+  const over = keys.length - cap;
+  let removed = 0;
+  if (over > 0) {
+    keys.sort((a, b) => (data.picks[a].t - data.picks[b].t) || (a < b ? -1 : a > b ? 1 : 0));
+    for (let i = 0; i < over; i++) { delete data.picks[keys[i]]; removed++; }
+  }
+  if (data.recent.length > PK_MAX_RECENT) data.recent.length = PK_MAX_RECENT;
+  return removed;
+}
+
+// Write the model. On quota errors keep the newest half of the entries and retry once.
+function pkWrite(storage, data) {
+  if (!storage || typeof storage.setItem !== 'function') return false;
+  let text;
+  try { text = JSON.stringify(data); } catch (e) { return false; }
+  try {
+    storage.setItem(PK_KEY, text);
+    pkCache = { raw: null, data: null };
+    return true;
+  } catch (e) {
+    try {
+      const d2 = pkClone(data);
+      pkPruneModel(d2, Math.floor(Object.keys(d2.picks).length / 2));
+      storage.setItem(PK_KEY, JSON.stringify(d2));
+      pkCache = { raw: null, data: null };
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+
+// Exponential decay with a 60 day half-life. Future timestamps count as "now".
+function pkDecay(ageMs) {
+  if (!(ageMs > 0)) return 1;
+  return Math.pow(0.5, ageMs / PK_HALF_LIFE_MS);
+}
+
+// Repeat growth: 1 pick gives 0.5, 2 give 0.75, 3 give 0.875, approaching 1.
+function pkGrowth(count) {
+  return 1 - Math.pow(0.5, count);
+}
+
+// Exact normalised query match = 1. A prefix in either direction (both at least
+// PK_PREFIX_MIN long for the shorter) = PK_PREFIX_WEIGHT. Otherwise 0.
+function pkQueryWeight(qNow, qStored) {
+  if (qNow === qStored) return 1;
+  const short = qNow.length < qStored.length ? qNow : qStored;
+  const long = short === qNow ? qStored : qNow;
+  if (short.length >= PK_PREFIX_MIN && long.startsWith(short)) return PK_PREFIX_WEIGHT;
+  return 0;
+}
+
+// Record a pick. query may be empty (recent-destination click): then only the
+// recent list is updated. Returns true when the write succeeded.
+function recordPick(storage, query, place, now) {
+  const p = pkPlaceKey(place);
+  if (!p) return false;
+  const q = pkNormQuery(query);
+  const t = Number.isFinite(now) ? now : Date.now();
+  const data = pkParse(pkRead(storage));
+  if (q.length >= 2) {
+    const key = pkEntryKey(q, p);
+    const prev = data.picks[key];
+    data.picks[key] = { q, p, c: prev ? prev.c + 1 : 1, t };
+  }
+  data.recent = [{ p, t }, ...data.recent.filter(r => r.p !== p)].slice(0, PK_MAX_RECENT);
+  pkPruneModel(data, PK_MAX_ENTRIES);
+  return pkWrite(storage, data);
+}
+
+// Boost for many places at once. Loads storage once and walks the picks once,
+// so it is O(picks + places). Returns an array aligned with places, values in [0, PK_MAX_BOOST].
+function pickBoostMany(storage, query, places, now) {
+  const list = Array.isArray(places) ? places : [];
+  const out = new Array(list.length).fill(0);
+  if (!list.length) return out;
+  const tNow = Number.isFinite(now) ? now : Date.now();
+  const data = pkLoad(storage);
+  if (!data.recent.length && !Object.keys(data.picks).length) return out;   // nothing learned: skip the per-place work
+  const q = pkNormQuery(query);
+
+  const queryBest = new Map();
+  if (q) {
+    for (const key of Object.keys(data.picks)) {
+      const e = data.picks[key];
+      const w = pkQueryWeight(q, e.q);
+      if (!w) continue;
+      const v = PK_QUERY_MAX * w * pkGrowth(e.c) * pkDecay(tNow - e.t);
+      if (v > (queryBest.get(e.p) || 0)) queryBest.set(e.p, v);
+    }
+  }
+  const recentBest = new Map();
+  for (const r of data.recent) {
+    if (!recentBest.has(r.p)) recentBest.set(r.p, PK_RECENT_MAX * pkDecay(tNow - r.t));
+  }
+
+  for (let i = 0; i < list.length; i++) {
+    const p = pkPlaceKey(list[i]);
+    if (!p) continue;
+    const v = (queryBest.get(p) || 0) + (recentBest.get(p) || 0);
+    out[i] = Math.min(PK_MAX_BOOST, v);
+  }
+  return out;
+}
+
+// Score bonus for one place for this query (query history plus recent destinations).
+function pickBoost(storage, query, place, now) {
+  return pickBoostMany(storage, query, [place], now)[0];
+}
+
+// Keep at most maxEntries (default 300) picks, dropping the least recently picked.
+// Returns the number of entries removed, or -1 when the write failed.
+function pruneStorage(storage, maxEntries) {
+  const data = pkParse(pkRead(storage));
+  const removed = pkPruneModel(data, maxEntries === undefined ? PK_MAX_ENTRIES : maxEntries);
+  if (removed === 0) return 0;
+  return pkWrite(storage, data) ? removed : -1;
+}
+
+// Remove everything the app has learned. Returns true when storage was cleared.
+function clearAllPicks(storage) {
+  pkCache = { raw: null, data: null };
+  if (!storage) return false;
+  try {
+    if (typeof storage.removeItem === 'function') { storage.removeItem(PK_KEY); return true; }
+  } catch (e) { /* fall through */ }
+  try {
+    storage.setItem(PK_KEY, JSON.stringify(pkEmpty()));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Number of stored (query, place) entries. Handy for a settings line.
+function pickCount(storage) {
+  return Object.keys(pkLoad(storage).picks).length;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    PK_KEY, PK_VERSION, PK_MAX_ENTRIES, PK_MAX_RECENT, PK_HALF_LIFE_MS, PK_QUERY_MAX,
+    PK_RECENT_MAX, PK_MAX_BOOST, PK_PREFIX_MIN, PK_PREFIX_WEIGHT,
+    pkNormQuery, pkPlaceKey, pkParse, pkPruneModel, pkDecay, pkGrowth, pkQueryWeight,
+    recordPick, pickBoost, pickBoostMany, pruneStorage, clearAllPicks, pickCount
+  };
+}
+
+/* ---------- alongRoute.js (rank by distance to the route) ---------- */
+/* alongRoute.js - rank places by distance to the route polyline, not the map centre.
+ * Plain ES2020, no imports, browser + node. Paste into index.html after haversine
+ * helpers (uses its own names: ar*). Does NOT replace nearestOnRoute in index.html.
+ *
+ * route coords: array of [lat, lon]. Candidates: objects with lat, lon, name and
+ * optional text (text quality from searchPlaces, higher is better).
+ */
+
+const AR_R = 6371008.8;          // same radius as index.html hav()
+const AR_RAD = Math.PI / 180;
+const AR_CELL_M = 400;           // grid cell size in metres
+const AR_MAX_GRID_CELLS = 4e6;   // cell size doubles until the grid fits
+const AR_MAX_SEARCH_M = 5000;    // beyond this a place is "far": no exact search
+const AR_DETOUR_MAX = 1.5;       // penalty ceiling (about one and a half tiers)
+const AR_DETOUR_HALF_KM = 2;     // detour (km) at which the penalty reaches half its ceiling
+const AR_BEHIND_SLACK_M = 150;   // places within this much behind the rider are not penalised
+const AR_BEHIND_BASE = 0.6;      // flat penalty for a place behind the rider
+const AR_BEHIND_EXTRA = 0.4;     // extra penalty growing with how far behind
+const AR_BEHIND_RANGE_M = 10000; // distance behind at which the extra reaches its maximum
+const AR_AHEAD_BONUS = 0.15;     // small preference for the nearest place ahead
+const AR_AHEAD_RANGE_M = 20000;  // the ahead bonus fades to 0 over this distance
+
+// Build a spatial index for a polyline. Invalid points are skipped.
+// Returns {m, cum, x, y, ...}; m is the number of valid points (0 means empty).
+function arBuildIndex(coords, opts) {
+  const src = Array.isArray(coords) ? coords : [];
+  const lat = [], lon = [];
+  for (let k = 0; k < src.length; k++) {
+    const p = src[k];
+    if (!p) continue;
+    const la = Number(p[0]), lo = Number(p[1]);
+    if (Number.isFinite(la) && Number.isFinite(lo)) { lat.push(la); lon.push(lo); }
+  }
+  const m = lat.length;
+  if (!m) return { m: 0, cum: [], x: [], y: [], total: 0, cell: 1, nx: 0, ny: 0, start: null, segs: null };
+
+  let sLat = 0, sLon = 0;
+  for (let k = 0; k < m; k++) { sLat += lat[k]; sLon += lon[k]; }
+  const lat0 = sLat / m, lon0 = sLon / m;
+  const kx = AR_R * Math.cos(lat0 * AR_RAD) * AR_RAD;   // metres per degree of longitude
+  const ky = AR_R * AR_RAD;                              // metres per degree of latitude
+
+  const x = new Float64Array(m), y = new Float64Array(m), cum = new Float64Array(m);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let k = 0; k < m; k++) {
+    x[k] = (lon[k] - lon0) * kx;
+    y[k] = (lat[k] - lat0) * ky;
+    if (x[k] < minX) minX = x[k];
+    if (x[k] > maxX) maxX = x[k];
+    if (y[k] < minY) minY = y[k];
+    if (y[k] > maxY) maxY = y[k];
+    if (k > 0) cum[k] = cum[k - 1] + arHav(lat[k - 1], lon[k - 1], lat[k], lon[k]);
+  }
+
+  let cell = opts && opts.cellM > 0 ? opts.cellM : AR_CELL_M;
+  let nx, ny;
+  for (;;) {
+    nx = Math.floor((maxX - minX) / cell) + 1;
+    ny = Math.floor((maxY - minY) / cell) + 1;
+    if (nx * ny <= AR_MAX_GRID_CELLS) break;
+    cell *= 2;
+  }
+
+  const nCells = nx * ny;
+  const segs0 = Math.max(0, m - 1);
+  const count = new Int32Array(nCells + 1);
+  const cellRange = (s) => {
+    const ax = x[s], bx = x[s + 1], ay = y[s], by = y[s + 1];
+    return [
+      Math.floor((Math.min(ax, bx) - minX) / cell), Math.floor((Math.max(ax, bx) - minX) / cell),
+      Math.floor((Math.min(ay, by) - minY) / cell), Math.floor((Math.max(ay, by) - minY) / cell)
+    ];
+  };
+  for (let s = 0; s < segs0; s++) {
+    const [c0, c1, r0, r1] = cellRange(s);
+    for (let cy = r0; cy <= r1; cy++) for (let cx = c0; cx <= c1; cx++) count[cy * nx + cx + 1]++;
+  }
+  for (let c = 0; c < nCells; c++) count[c + 1] += count[c];
+  const start = count;                       // start[c]..start[c+1] are the segments of cell c
+  const fill = start.slice(0, nCells);
+  const segs = new Int32Array(start[nCells]);
+  for (let s = 0; s < segs0; s++) {
+    const [c0, c1, r0, r1] = cellRange(s);
+    for (let cy = r0; cy <= r1; cy++) for (let cx = c0; cx <= c1; cx++) {
+      const c = cy * nx + cx;
+      segs[fill[c]++] = s;
+    }
+  }
+
+  return { m, lat0, lon0, kx, ky, x, y, cum, total: cum[m - 1], minX, minY, maxX, maxY,
+    cell, nx, ny, start, segs };
+}
+
+// Great-circle distance in metres (same formula as index.html hav()).
+function arHav(a, b, c, d) {
+  const x = Math.sin((c - a) * AR_RAD / 2), y = Math.sin((d - b) * AR_RAD / 2);
+  return 2 * AR_R * Math.asin(Math.sqrt(x * x + Math.cos(a * AR_RAD) * Math.cos(c * AR_RAD) * y * y));
+}
+
+// Nearest point of the polyline to (lat, lon).
+// Returns {d, i, t, along, far}: d metres to the polyline, i the segment index,
+// t the position within that segment (0..1), along the metres from route start.
+// If the nearest point is farther than maxSearchM, far is true and d/along are null.
+// Returns null for an empty index.
+function arNearest(idx, lat, lon, maxSearchM) {
+  if (!idx || !idx.m) return null;
+  const maxM = Number.isFinite(maxSearchM) ? maxSearchM : AR_MAX_SEARCH_M;
+  const px = (lon - idx.lon0) * idx.kx, py = (lat - idx.lat0) * idx.ky;
+  if (idx.m === 1) {
+    const d = Math.hypot(px - idx.x[0], py - idx.y[0]);
+    return d <= maxM ? { d, i: 0, t: 0, along: 0, far: false } : { d: null, i: -1, t: 0, along: null, far: true };
+  }
+  // Clamp to the grid box. Projection onto a convex box never increases distance,
+  // so the ring stop rule below stays valid for points outside the box too.
+  const qx = Math.min(idx.maxX, Math.max(idx.minX, px));
+  const qy = Math.min(idx.maxY, Math.max(idx.minY, py));
+  const outside = Math.hypot(px - qx, py - qy);
+  if (outside > maxM) return { d: null, i: -1, t: 0, along: null, far: true };
+
+  const cell = idx.cell, nx = idx.nx, ny = idx.ny, start = idx.start, segs = idx.segs;
+  const x = idx.x, y = idx.y;
+  const cx = Math.min(nx - 1, Math.max(0, Math.floor((qx - idx.minX) / cell)));
+  const cy = Math.min(ny - 1, Math.max(0, Math.floor((qy - idx.minY) / cell)));
+  const maxRing = Math.max(nx, ny);
+
+  let bestD = Infinity, bestI = -1, bestT = 0;
+  const visit = (c) => {
+    const e = start[c + 1];
+    for (let k = start[c]; k < e; k++) {
+      const s = segs[k];
+      const ax = x[s], ay = y[s];
+      const dx = x[s + 1] - ax, dy = y[s + 1] - ay;
+      const L2 = dx * dx + dy * dy;
+      let t = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const ex = ax + t * dx - px, ey = ay + t * dy - py;
+      const d = Math.sqrt(ex * ex + ey * ey);
+      if (d < bestD) { bestD = d; bestI = s; bestT = t; }
+    }
+  };
+
+  for (let r = 0; r <= maxRing; r++) {
+    const y0 = cy - r, y1 = cy + r;
+    const yFrom = Math.max(0, y0), yTo = Math.min(ny - 1, y1);
+    for (let yy = yFrom; yy <= yTo; yy++) {
+      if (yy === y0 || yy === y1) {
+        const xFrom = Math.max(0, cx - r), xTo = Math.min(nx - 1, cx + r);
+        for (let xx = xFrom; xx <= xTo; xx++) visit(yy * nx + xx);
+      } else {
+        if (cx - r >= 0) visit(yy * nx + cx - r);
+        if (r > 0 && cx + r <= nx - 1) visit(yy * nx + cx + r);
+      }
+    }
+    // Every segment not yet visited has all its points at least r*cell from the cell.
+    if (bestD <= r * cell) break;
+    if (r * cell >= maxM) break;
+  }
+
+  if (bestI < 0 || bestD > maxM) return { d: null, i: -1, t: 0, along: null, far: true };
+  const along = idx.cum[bestI] + bestT * (idx.cum[bestI + 1] - idx.cum[bestI]);
+  return { d: bestD, i: bestI, t: bestT, along, far: false };
+}
+
+// Detour estimate for a place d metres off the route: go there and come back.
+function arDetourM(dMetres) {
+  return 2 * dMetres;
+}
+
+// Ranking score parts for one candidate. Exposed for tests and tuning.
+// along: metres from route start, riderAlong: metres from route start to the rider now.
+function arScore(text, dEff, along, riderAlong) {
+  const detourKm = arDetourM(dEff) / 1000;
+  const detourPen = AR_DETOUR_MAX * detourKm / (detourKm + AR_DETOUR_HALF_KM);
+  let behindPen = 0, aheadBonus = 0;
+  if (along !== null && along !== undefined) {
+    const gap = riderAlong - along;            // > 0 means the place is behind the rider
+    if (gap > AR_BEHIND_SLACK_M) {
+      behindPen = AR_BEHIND_BASE + AR_BEHIND_EXTRA * Math.min(1, gap / AR_BEHIND_RANGE_M);
+    } else if (gap < 0) {
+      aheadBonus = AR_AHEAD_BONUS * Math.max(0, 1 - (-gap) / AR_AHEAD_RANGE_M);
+    }
+  }
+  return { score: text - detourPen - behindPen + aheadBonus, detourPen, behindPen, aheadBonus };
+}
+
+// Rank candidates along the route. Returns a new array sorted best first, each entry:
+// {place, name, lat, lon, text, d, along, detourM, far, behind, score}.
+// Candidates without finite lat/lon are dropped. Without an index (no route)
+// the order is by text, then name.
+// opts: riderAlong (m, default 0), maxSearchM (default 5000), limit (default all).
+function arRank(idx, candidates, opts) {
+  opts = opts || {};
+  const riderAlong = Number.isFinite(opts.riderAlong) ? opts.riderAlong : 0;
+  const maxM = Number.isFinite(opts.maxSearchM) ? opts.maxSearchM : AR_MAX_SEARCH_M;
+  const list = Array.isArray(candidates) ? candidates : [];
+  const out = [];
+  for (let k = 0; k < list.length; k++) {
+    const c = list[k];
+    if (!c) continue;
+    const lat = Number(c.lat), lon = Number(c.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const text = Number.isFinite(c.text) ? c.text : 0;
+    const near = arNearest(idx, lat, lon, maxM);
+    const haveRoute = !!near;
+    const far = !haveRoute || near.far;
+    const dEff = far ? maxM : near.d;
+    const along = !far ? near.along : null;
+    const s = haveRoute ? arScore(text, dEff, along, riderAlong) : { score: text, detourPen: 0, behindPen: 0, aheadBonus: 0 };
+    out.push({
+      place: c, name: c.name, lat, lon, text,
+      d: haveRoute && !far ? near.d : null,
+      along,
+      detourM: haveRoute ? arDetourM(dEff) : null,
+      far: haveRoute ? far : false,
+      behind: along !== null && riderAlong - along > AR_BEHIND_SLACK_M,
+      score: s.score
+    });
+  }
+  out.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const aa = a.along === null ? Infinity : a.along, bb = b.along === null ? Infinity : b.along;
+    if (aa !== bb) return aa < bb ? -1 : 1;
+    const an = String(a.name || ''), bn = String(b.name || '');
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
+  const lim = Number.isFinite(opts.limit) && opts.limit >= 0 ? opts.limit : out.length;
+  return out.slice(0, lim);
+}
+
+// Cache of indexes per route. Keyed by the coords array object, so a new route
+// object (new array) gets a new index. Do not mutate coords after first use.
+const arCache = new WeakMap();
+function arIndexFor(route) {
+  const coords = route && route.coords;
+  if (!Array.isArray(coords)) return null;
+  let idx = arCache.get(coords);
+  if (!idx) { idx = arBuildIndex(coords); arCache.set(coords, idx); }
+  return idx;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    AR_CELL_M, AR_MAX_SEARCH_M, AR_DETOUR_MAX, AR_DETOUR_HALF_KM, AR_BEHIND_SLACK_M,
+    AR_BEHIND_BASE, AR_BEHIND_EXTRA, AR_BEHIND_RANGE_M, AR_AHEAD_BONUS, AR_AHEAD_RANGE_M,
+    arBuildIndex, arNearest, arDetourM, arScore, arRank, arIndexFor, arHav
+  };
+}
+
 // Search places. Returns up to opts.limit (default 12) results of the shape
 // {name, lat, lon, sub, cat, src:'fsq', dk} where dk is distance in metres or null.
 // Score = quality tier minus a distance penalty of at most 0.5*bias, so the
@@ -891,6 +1394,10 @@ async function searchPlaces(query, center, opts) {
   const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
 
   const scored = [];
+  const hits = items.filter(it => fsqMatches(it.all, qTokens));
+  const boosts = typeof opts.boostMany === 'function' ? opts.boostMany(query, hits) : null;
+  const boostOf = new Map();
+  if (boosts) hits.forEach((it, i) => boostOf.set(it, boosts[i]));
   const pushScored = (it, dist) => {
     const q = fsqQuality(fsqCanon(it.norm), qNorm) + fsqCatAdj(it.row);
     let d = null;
@@ -899,10 +1406,11 @@ async function searchPlaces(query, center, opts) {
       d = haversineKm(center, it);
       score = q - bias * 2.2 * d / (d + 60);
     }
+    if (boostOf.size && dist === 0) score += boostOf.get(it) || 0;
     if (dist > 0) score = FZ_BAND + score - 1.5 * dist;   // typo hit: always below strict hits
     scored.push({ it, d, score });
   };
-  for (const it of items) if (fsqMatches(it.all, qTokens)) pushScored(it, 0);
+  for (const it of hits) pushScored(it, 0);
   if (scored.length < 3) {
     for (const f of await fsqFuzzyItems(qTokens, keyList, opts.getShard)) pushScored(f.it, f.dist);
   }
@@ -935,7 +1443,8 @@ async function searchPlaces(query, center, opts) {
     sub: s.it.row[3] != null ? s.it.row[3] : null,
     cat: s.it.row[4] != null ? s.it.row[4] : null,
     src: 'fsq',
-    dk: s.d == null ? null : Math.round(s.d * 1000)
+    dk: s.d == null ? null : Math.round(s.d * 1000),
+    score: s.score
   }));
 }
 
@@ -952,13 +1461,22 @@ function landmarkRank(lms,query,c){
   for(const m of lms){let best=0;for(const v of m.vs){let sc=0;if(v.n===qn)sc=4;else if(v.n.startsWith(qn))sc=3;else if(fsqMatches(v.w,qt))sc=2.2;if(sc>best)best=sc}
     if(!best)continue;const d=hav(c.lat,c.lng,m.lat,m.lon)/1000;out.push({lm:true,lat:m.lat,lon:m.lon,name:m.name,sub:m.cat,score:best-0.8*d/(d+300)})}
   return out.sort((a,b)=>b.score-a.score).slice(0,6)}
-async function fsqSearch(q){const c=map.getCenter();const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15});
+async function fsqSearch(q){const c=map.getCenter();const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
   const shard=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · ')}));
   let lm=[];try{lm=landmarkRank(await getLandmarks(),q,c)}catch(e){}
   return [...lm,...shard.filter(p=>!lm.some(m=>hav(m.lat,m.lon,p.lat,p.lon)<250&&normWords(m.name).join(' ')===normWords(p.name).join(' ')))]}
+// While navigating: wider pool (80), no distance bias, ranked by distance to the rest of the route (arRank). Same result shape as fsqSearch.
+function riderAlongNow(){const n=st.nav;if(!n||!n.r||!Array.isArray(n.r.cum))return 0;return n.r.cum[n.last]||0}
+async function fsqSearchAlong(q,route,riderAlongM){const c=map.getCenter();
+  const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:80,bias:0,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
+  let lm=[];try{lm=landmarkRank(await getLandmarks(),q,c)}catch(e){}
+  const shard=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · '),text:p.score}));
+  const cand=[...lm.map(m=>({...m,text:m.score})),...shard.filter(p=>!lm.some(m=>hav(m.lat,m.lon,p.lat,p.lon)<250&&normWords(m.name).join(' ')===normWords(p.name).join(' ')))];
+  const ranked=arRank(arIndexFor(route),cand,{riderAlong:Number.isFinite(riderAlongM)?riderAlongM:0,limit:15});
+  return ranked.map(x=>({lat:x.lat,lon:x.lon,name:x.name,sub:x.place.sub}))}
 
 const qO=$('#qOrigin'),qD=$('#qDest'),sugg=$('#sugg');
-let sTimer,sCtl;
+let sTimer,sCtl,sPickQ='';   // sPickQ: query the visible search list came from ('' for recent/saved)
 function dedupePlaces(list){const out=[];for(const p of list){const k=(p.name||'').trim().toLowerCase();
     if(out.some(o=>{if((o.name||'').trim().toLowerCase()!==k)return false;const d=hav(o.lat,o.lon,p.lat,p.lon);return d<500||((o.sub||'')===(p.sub||'')&&d<3000)}))continue;out.push(p)}return out}
 async function ttOne(q,signal,extra){const c=map.getCenter();
@@ -968,14 +1486,14 @@ async function ttSearch(q,signal){if(!S.tomtom)return[];
   const r=await Promise.allSettled([ttOne(q,signal,'&idxSet=POI'),ttOne(q,signal,'')]);return r.flatMap(x=>x.status==='fulfilled'?x.value:[])}
 function parseCoordQuery(q){let m=q.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)||q.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)||q.match(/[?&](?:q|ll|query|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i)||q.match(/^\s*(-?\d{1,2}\.\d{2,})\s*[, ]\s*(-?\d{2,3}\.\d{2,})\s*$/);
   if(!m)return null;const la=+m[1],lo=+m[2];if(la<-11||la>8||lo<94||lo>120)return null;return{lat:la,lon:lo,name:`${la.toFixed(5)}, ${lo.toFixed(5)}`,sub:S.lang==='ms'?'Koordinat / pautan peta':'Coordinates / map link'}}
-async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b,f]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal),fsqSearch(q)]);
+async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b,f]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal),st.nav?fsqSearchAlong(q,st.nav.r,riderAlongNow()):fsqSearch(q)]);
   if(signal&&signal.aborted)throw new DOMException('Aborted','AbortError');
   if(a.status==='rejected'&&b.status==='rejected'&&f.status==='rejected')throw a.reason;
   const c=map.getCenter();
   const l=dedupePlaces([...(f.status==='fulfilled'?f.value:[]),...(b.status==='fulfilled'?b.value:[]),...(a.status==='fulfilled'?a.value:[])]);
   l.forEach(p=>p.dk=hav(c.lat,c.lng,p.lat,p.lon));
   const cnt={};l.forEach(p=>{const k=(p.name||'').toLowerCase();cnt[k]=(cnt[k]||0)+1});
-  if(Object.values(cnt).some(n=>n>=3))l.sort((x,y)=>(y.lm?1:0)-(x.lm?1:0)||x.dk-y.dk);
+  if(!st.nav&&Object.values(cnt).some(n=>n>=3))l.sort((x,y)=>(y.lm?1:0)-(x.lm?1:0)||x.dk-y.dk);
   return l.slice(0,20).map(p=>({...p,sub:(p.dk<1000?Math.round(p.dk)+' m':(p.dk/1000).toFixed(p.dk<10000?1:0)+' km')+(p.sub?' · '+p.sub:'')}))}
 async function geocodeRaw(q,signal){const c=map.getCenter();
   try{const j=await getJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=12&lat=${c.lat.toFixed(4)}&lon=${c.lng.toFixed(4)}&bbox=99.5,0.8,119.5,7.5`,{signal},10000);
@@ -992,13 +1510,13 @@ let suggItems=[];
 function showSugg(list,headers){suggItems=list;if(!list.length&&!headers){sugg.innerHTML=`<div class="si muted">${T('noRes')}</div>`;sugg.classList.remove('hidden');return}
   sugg.innerHTML=list.map((p,i)=>(p.hdr?`<div class="hdr">${esc(p.hdr)}</div>`:'')+`<button class="si" data-i="${i}"><span class="gl">${p.icon||icoPin}</span><span style="min-width:0"><div class="t">${esc(p.name)}</div>${p.sub?`<div class="s">${esc(p.sub)}</div>`:''}</span>${p.del?`<span class="x" data-del="${p.del}" data-k="${i}">✕</span>`:''}</button>`).join('');
   sugg.classList.toggle('hidden',!list.length)}
-function defaultSugg(){const l=[];if(st.field==='origin'&&st.here)l.push({name:T('myLoc'),icon:icoGps,gps:true});
+function defaultSugg(){sPickQ='';const l=[];if(st.field==='origin'&&st.here)l.push({name:T('myLoc'),icon:icoGps,gps:true});
   S.saved.forEach((p,i)=>l.push({...p,icon:icoStar,hdr:i===0?T('saved'):null,del:'saved'}));
   S.recent.slice(0,6).forEach((p,i)=>l.push({...p,icon:icoClock,hdr:i===0?T('recent'):null,del:'recent'}));
   showSugg(l,true);if(!l.length)sugg.classList.add('hidden')}
 function onInput(e){st.field=e.target===qO?'origin':'dest';const q=e.target.value.trim();$('#btnClear').classList.toggle('hidden',!qD.value);clearTimeout(sTimer);if(sCtl)sCtl.abort();
   if(q.length<2){defaultSugg();return}
-  sTimer=setTimeout(async()=>{sCtl=new AbortController();try{showSugg(await geocode(q,sCtl.signal))}catch(err){if(err.name!=='AbortError')showSugg([])}},300)}
+  sTimer=setTimeout(async()=>{sCtl=new AbortController();try{const res=await geocode(q,sCtl.signal);sPickQ=q;showSugg(res)}catch(err){if(err.name!=='AbortError')showSugg([])}},300)}
 qO.addEventListener('input',onInput);qD.addEventListener('input',onInput);
 qO.addEventListener('focus',()=>{st.field='origin';if(qO.value.trim().length<2)defaultSugg();qO.select()});
 qD.addEventListener('focus',()=>{st.field='dest';if(qD.value.trim().length<2)defaultSugg()});
@@ -1007,6 +1525,7 @@ sugg.addEventListener('click',e=>{const x=e.target.closest('.x');if(x){const it=
   const b=e.target.closest('.si[data-i]');if(!b)return;pick(suggItems[+b.dataset.i])});
 document.addEventListener('click',e=>{if(!e.target.closest('#top'))sugg.classList.add('hidden')});
 function pick(p){sugg.classList.add('hidden');document.activeElement.blur();
+  if(st.field!=='origin'&&!p.gps){try{recordPick(PICKS_STORE,sPickQ,p,Date.now())}catch(e){}}sPickQ='';
   if(st.field==='origin'){if(p.gps){st.origin=st.here?{lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true}:null;qO.value=''}else{st.origin={lat:p.lat,lon:p.lon,name:p.name,gps:false};qO.value=p.name}}
   else setDest({lat:p.lat,lon:p.lon,name:p.name,sub:p.sub||''});
   if(st.dest)computeRoutes()}
@@ -1570,11 +2089,16 @@ $('#btnLayers').onclick=()=>{modal(`<h3>${T('layers')}</h3>
       if(!S.traffic){S.traffic=true;save('traffic');const t=$('#mTraffic');if(t)t.classList.add('on')}
       setTraffic();toast(T('ttOk'));if(st.dest)computeRoutes()}
     catch(err){setTraffic();toast(T('ttBad'))}}};
+Object.assign(I.ms,{learnT:'Carian yang dipelajari',learnB:'Padam',learnNote:'Pilihan tempat anda disimpan pada peranti ini sahaja. Tiada apa-apa dihantar ke mana-mana.',learnDone:'Carian yang dipelajari telah dipadam'});
+Object.assign(I.en,{learnT:'Learned searches',learnB:'Clear',learnNote:'Places you pick are stored on this device only. Nothing is sent anywhere.',learnDone:'Learned searches cleared'});
+Object.assign(I.zh,{learnT:'已学习的搜索',learnB:'清除',learnNote:'您选择的地点仅保存在此设备上，不会发送到任何地方。',learnDone:'已清除学习的搜索'});
+Object.assign(I.ta,{learnT:'கற்றுக்கொண்ட தேடல்கள்',learnB:'அழி',learnNote:'நீங்கள் தேர்ந்தெடுத்த இடங்கள் இந்தச் சாதனத்தில் மட்டுமே சேமிக்கப்படும். எதுவும் எங்கும் அனுப்பப்படாது.',learnDone:'கற்றுக்கொண்ட தேடல்கள் அழிக்கப்பட்டன'});
 $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   <div class="tog"><span>${T('lang')}</span><div class="seg" style="width:260px;flex-wrap:wrap">${[['ms','Bahasa'],['en','English'],['zh','中文'],['ta','தமிழ்']].map(([k,n])=>`<button data-l="${k}" class="${S.lang===k?'on':''}">${n}</button>`).join('')}</div></div>
   <div class="tog"><span>${T('rider')}</span><button class="sw ${S.rider?'on':''}" id="mRider"></button></div>
   <div class="tog"><span>${T('voice')}</span><button class="sw ${S.voice?'on':''}" id="mVoice"></button></div>
   ${SC.row()}
+  <div class="tog"><span>${T('learnT')}</span><button class="btn s" id="mClearPicks">${T('learnB')}</button></div><div class="muted">${T('learnNote')}</div>
   <div class="tog"><span>${T('look')}</span><button class="btn s" id="mLook">${T('lookT')}</button></div>
   <div class="tog"><span>${T('credits')}</span><button class="btn s" id="mCred">${T('creditsB')}</button></div>
   <div class="muted">${T('family')}</div><input class="field" id="mFam" inputmode="tel" value="${esc(S.family)}" placeholder="60…">
@@ -1587,6 +2111,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   $('#mFam').onchange=e=>{S.family=e.target.value.trim();save('family')};
   $('#mVoice').onclick=e=>{S.voice=!S.voice;save('voice');e.target.classList.toggle('on',S.voice)};
   SC.bind();
+  $('#mClearPicks').onclick=()=>{clearAllPicks(PICKS_STORE);toast(T('learnDone'))};
   $('#mLook').onclick=openLook;
   $('#mCred').onclick=openCredits;
   $('#mReport').onclick=e=>{e.preventDefault();openReport()};
