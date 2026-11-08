@@ -853,6 +853,43 @@ var QU = (function () {
     return acc;
   }
 
+  // Typo-tolerant category spans ("stesen minyk" for "stesen minyak"), used only when no category form matches exactly.
+  // A whole form matches when each of its words is the same or one typo away (two for 8+ letters); the typed word
+  // must have 4+ letters to take a typo. Returns spans shaped like findSpans' output.
+  function typoCatSpans(S, forms, taken) {
+    var qw = S.split(' '), starts = [], pos = 0;
+    qw.forEach(function (w) { starts.push(pos); pos += w.length + 1; });
+    var cands = [];
+    forms.forEach(function (e) {
+      if (e.kind !== 'cat' || e.cjk) return;
+      var fw = e.f.split(' ');
+      if (fw.length === 1 && e.f.length < 5) return;
+      for (var i = 1; i + fw.length <= qw.length - 1; i++) {
+        var dist = 0, ok = true;
+        for (var j = 0; j < fw.length && ok; j++) {
+          var a = qw[i + j], b = fw[j];
+          if (a === b) continue;
+          var k = b.length >= 8 ? 2 : b.length >= 4 ? 1 : 0;
+          if (!k || a.length < 4 || /\d/.test(a)) { ok = false; break; }
+          var d = fzDL(a, b, k);
+          if (d > k) { ok = false; break; }
+          dist += d;
+        }
+        if (ok && dist > 0) {
+          var start = starts[i], end = starts[i + fw.length - 1] + qw[i + fw.length - 1].length;
+          cands.push({ start: start, end: end, e: e, dist: dist });
+        }
+      }
+    });
+    cands.sort(function (x, y) { return (x.dist - y.dist) || ((y.end - y.start) - (x.end - x.start)) || (x.start - y.start); });
+    var acc = [];
+    cands.forEach(function (c) {
+      var clash = taken.concat(acc).some(function (o) { return c.start < o.end && o.start < c.end; });
+      if (!clash) acc.push(c);
+    });
+    return acc;
+  }
+
   function splitLatin(piece) {
     return (piece.match(/[a-z]+|[0-9]+/g) || []);
   }
@@ -876,11 +913,16 @@ var QU = (function () {
     return re;
   }
 
-  function parseQuery(q) {
+  function parseQuery(q, opts) {
     var K2 = compile();
     var raw = q == null ? '' : String(q);
     var S = ' ' + fold(raw) + ' ';
     var spans = findSpans(S, K2.forms);
+    var typoCat = false;
+    if (!(opts && opts.noTypoCat) && !spans.some(function (s) { return s.e.kind === 'cat'; })) {
+      var typoSpans = typoCatSpans(S, K2.forms, spans);
+      if (typoSpans.length) { spans = spans.concat(typoSpans).sort(function (x, y) { return x.start - y.start; }); typoCat = true; }
+    }
 
     var nearMe = false;
     var catIds = [];
@@ -951,6 +993,7 @@ var QU = (function () {
       categoryIntent: categoryIntent,
       nameRe: nameRe,
       formWords: formsAll.filter(function (f) { return f.indexOf(' ') < 0 && f.length >= 3; }).slice(0, 3),
+      typoCat: typoCat,   // a category read from a misspelt form (see typoCatSpans)
       intentIds: catIds.concat(brandIds),
       intentLabel: intentLabel,
       catOnly: hasIntent && tokens.length === 0,
@@ -1248,15 +1291,16 @@ function fsqWeakTokMatch(w, t) {
   const a = FSQ_ALIAS_WEAK[t];
   return !!a && (w === a || (a.length > 3 && w.startsWith(a)));
 }
-// Typo tolerance. Used only when strict matching finds fewer than 3 places (see searchPlaces).
-// Fuzzy scores sit in a band (FZ_BAND) far below every strict score, so strict hits always rank first.
+// Typo tolerance (see searchPlaces). The pass runs when strict matching finds fewer than 3 places or no good one.
+// Fuzzy hits sit in a band (FZ_BAND) far below every strict score, unless no strict hit is good (then they merge).
 const FZ_BAND = -100;
+const FZ_FAR_KM = 30;   // a strict hit farther than this from the map centre is not "good" (see searchPlaces)
 const FZ_NEAR = { q: 'wa', w: 'qes', e: 'wrd', r: 'etf', t: 'ryg', y: 'tuh', u: 'yij', i: 'uok', o: 'ipl', p: 'o',
   a: 'qsz', s: 'awdx', d: 'sefc', f: 'drgv', g: 'fthb', h: 'gyjn', j: 'hukm', k: 'jilo', l: 'kop', z: 'asx',
   x: 'zsd', c: 'xdfv', v: 'cfgb', b: 'vghn', n: 'bhjm', m: 'njk' };
 // Optimal-string-alignment distance; returns max + 1 as soon as the distance must exceed max.
-function fzDL(a, b, max) {
-  const la = a.length, lb = b.length;
+function fzDL(a, b, max, bl) {
+  const la = a.length, lb = bl == null ? b.length : bl;
   if (Math.abs(la - lb) > max) return max + 1;
   let pp = null, p = [];
   for (let j = 0; j <= lb; j++) p[j] = j;
@@ -1274,6 +1318,26 @@ function fzDL(a, b, max) {
   }
   return p[lb] <= max ? p[lb] : max + 1;
 }
+// Spelling variants common in Malaysian names are folded to one form, so "shah"/"syah", "pitchong"/"puchong",
+// "fenang"/"penang" count as one typo (distance 1). Folded forms are cached per word.
+const FZ_PHON = new Map();
+function fzPhon(w) {
+  let s = FZ_PHON.get(w);
+  if (s !== undefined) return s;
+  s = w.replace(/ph/g, 'f').replace(/sh|sy/g, 's').replace(/ck/g, 'k').replace(/q/g, 'k').replace(/ee/g, 'i')
+    .replace(/oo|ou/g, 'u').replace(/aw/g, 'o').replace(/v/g, 'w').replace(/z/g, 's').replace(/c(?=[eiy])/g, 's')
+    .replace(/c/g, 'k').replace(/y$/, 'i').replace(/(.)\1+/g, '$1');
+  if (FZ_PHON.size > 50000) FZ_PHON.clear();
+  FZ_PHON.set(w, s);
+  return s;
+}
+// Phonetic equality of a typed word with a name word, or of its prefix of about the typed length.
+function fzPhonMatch(w, pt) {   // pt: folded typed token
+  const pw = fzPhon(w);
+  if (pw === pt) return true;
+  return (pw.startsWith(pt) && pw.length - pt.length <= 1) || (pt.startsWith(pw) && pt.length - pw.length <= 1);
+}
+let fzPtTok = '', fzPtVal = '';   // phonetic form of the last typed token (one per query token)
 // Word-level distance between a typed token and one name word, prefix-aware.
 // -1 no match; 0 exact or prefix; 1 or 2 typo. Allowed: 1 edit for 4-7 chars, 2 for 8+.
 function fzWordDist(w, t) {
@@ -1281,28 +1345,52 @@ function fzWordDist(w, t) {
   const k = t.length >= 8 ? 2 : t.length >= 4 ? 1 : 0;
   if (!k || /\d/.test(t)) return -1;
   let miss = 0;
-  for (const ch of t) if (!w.includes(ch) && ++miss > k) return -1;
+  for (const ch of t) if (!w.includes(ch) && ++miss > k) { miss = -1; break; }
   let best = -1;
-  for (let p = Math.max(1, t.length - k); p <= Math.min(w.length, t.length + k); p++) {
-    const d = fzDL(t, w.slice(0, p), k);
-    if (d <= k && (best < 0 || d < best)) best = d;
+  if (miss >= 0) {
+    for (let p = Math.max(1, t.length - k); p <= Math.min(w.length, t.length + k); p++) {
+      const d = fzDL(t, w, k, p);
+      if (d <= k && (best < 0 || d < best)) best = d;
+    }
+    if (best === 1 || best === 0) return best;
   }
+  // spelling variants (fzPhon): one typo when the folded forms agree
+  if (t !== fzPtTok) { fzPtTok = t; fzPtVal = fzPhon(t); }
+  if (fzPtVal.length >= 3 && fzPhonMatch(w, fzPtVal)) return 1;
   return best;
+}
+// Per-query memo of fzWordDist: shard rows repeat the same name words ("hotel", "mall", "kedai") across many rows.
+let fzMemo = new Map();
+function fzWordDistM(w, t) {
+  let m = fzMemo.get(t);
+  if (!m) { m = new Map(); fzMemo.set(t, m); }
+  let d = m.get(w);
+  if (d === undefined) { d = fzWordDist(w, t); m.set(w, d); }
+  return d;
 }
 // Worst token distance over a place's words (each token takes its best word); -1 if a token matches nothing.
 function fzItemDist(words, qTokens) {
+  return fzItemFix(words, qTokens).dist;
+}
+// As fzItemDist, plus the corrected query: each token replaced by the name word it matched (typo tokens only).
+function fzItemFix(words, qTokens) {
   let worst = 0;
+  const corr = [];
   for (const t of qTokens) {
-    let best = -1;
+    let best = -1, bw = t;
     for (const w of words) {
-      const d = fzWordDist(w, t);
-      if (d >= 0 && (best < 0 || d < best)) { best = d; if (!d) break; }
+      const d = fzWordDistM(w, t);
+      if (d >= 0 && (best < 0 || d < best)) { best = d; bw = w; if (!d) break; }
     }
-    if (best < 0) return -1;
+    if (best < 0) return { dist: -1, corr: null };
+    corr.push(best > 0 ? bw : t);
     if (best > worst) worst = best;
   }
-  return worst;
+  return { dist: worst, corr };
 }
+// Spelling pairs of the name spellings (folded in fzPhon): a pair found in the typed head gives its other spelling.
+const FZ_PHON_SUBS = [['ph', 'f'], ['f', 'ph'], ['c', 'k'], ['k', 'c'], ['v', 'w'], ['w', 'v'], ['sh', 's'], ['s', 'sh'],
+  ['oo', 'u'], ['u', 'oo'], ['ee', 'i'], ['i', 'ee'], ['aw', 'o'], ['o', 'aw']];
 // Single-edit variants of the 4-char shard key of a typed token (a typo inside its first 4 chars
 // makes the token point at the wrong shard). Order: transpositions, then a char dropped from the
 // first 5 chars (an extra letter typed), then QWERTY-neighbour substitutions.
@@ -1312,6 +1400,12 @@ function fzKeyVariants(t) {
   for (let i = 0; i + 1 < k.length; i++) add(k.slice(0, i) + k[i + 1] + k[i] + k.slice(i + 2));
   const five = t.slice(0, 5);
   for (let i = 0; i < five.length - 1; i++) add(five.slice(0, i) + five.slice(i + 1));
+  const head = t.slice(0, 6);
+  for (const [a, b] of FZ_PHON_SUBS) {
+    for (let i = head.indexOf(a); i >= 0; i = head.indexOf(a, i + 1)) add((head.slice(0, i) + b + head.slice(i + a.length)).slice(0, 4));
+  }
+  // a vowel the rider left out inside the key: the typed key shifted by one letter
+  for (let i = 1; i < 4; i++) for (const c of 'aeiou') add((k.slice(0, i) + c + k.slice(i)).slice(0, 4));
   for (let i = 0; i < k.length; i++) for (const c of FZ_NEAR[k[i]] || '') add(k.slice(0, i) + c + k.slice(i + 1));
   return out;
 }
@@ -1319,31 +1413,65 @@ function fzKeyVariants(t) {
 // shard is a cached empty list). Returns [{it, dist}]; dist 0 means an exact word found in another shard.
 const FZ_MAX_PROBE = 12;
 async function fsqFuzzyItems(qTokens, keyList, getShard) {
-  const keys = [], seen = new Set();
-  const add = k => { if (!seen.has(k)) { seen.add(k); keys.push(k); } };
-  keyList.forEach(add);
-  let probes = 0;
+  fzMemo = new Map();
+  const out = [], seenRow = new Set(), fetched = new Set();
+  // Loads shards not fetched yet (in parallel) and adds their typo items to out.
+  const take = async keys => {
+    const fresh = keys.filter(k => !fetched.has(k));
+    fresh.forEach(k => fetched.add(k));
+    const loaded = await Promise.all(fresh.map(k => Promise.resolve().then(() => getShard(k)).then(r => [k, r], () => [k, null])));
+    for (const [k, r] of loaded) {
+      if (!Array.isArray(r) || !r.length) continue;
+      for (const it of fsqPrepare(k, r)) {
+        const fix = fzItemFix(it.all, qTokens);
+        if (fix.dist < 0) continue;
+        const id = it.name + '|' + it.lat + '|' + it.lon;
+        if (seenRow.has(id)) continue;
+        seenRow.add(id);
+        out.push({ it, dist: fix.dist, corr: fix.corr.join(' ') });
+      }
+    }
+  };
+  // Stage 1: the typed keys. When one of their typo rows already starts with the corrected phrase, the variant keys stay unfetched.
+  await take(keyList.slice());
+  if (out.some(f => f.dist > 0 && f.dist <= 1 && fsqQuality(f.it.norm, fsqCanon(f.corr)) >= 2.5)) return out;
+  // Stage 2: up to FZ_MAX_PROBE variant keys (a typo in the first 4 letters points at another shard).
+  const probes = [], seen = new Set(keyList);
   for (const t of qTokens) {
     if (t.length < 4) continue;
     for (const v of fzKeyVariants(t)) {
-      if (probes >= FZ_MAX_PROBE) break;
-      if (!seen.has(v)) { add(v); probes++; }
+      if (probes.length >= FZ_MAX_PROBE) break;
+      if (!seen.has(v)) { seen.add(v); probes.push(v); }
     }
   }
-  const loaded = await Promise.all(keys.map(k => Promise.resolve().then(() => getShard(k)).then(r => [k, r], () => [k, null])));
-  const out = [], seenRow = new Set();
-  for (const [k, r] of loaded) {
-    if (!Array.isArray(r) || !r.length) continue;
-    for (const it of fsqPrepare(k, r)) {
-      const dist = fzItemDist(it.all, qTokens);
-      if (dist < 0) continue;
-      const id = it.name + '|' + it.lat + '|' + it.lon;
-      if (seenRow.has(id)) continue;
-      seenRow.add(id);
-      out.push({ it, dist });
-    }
-  }
+  await take(probes);
   return out;
+}
+// Landmark typo match over its names and aliases (vs: [{w, n}]). lmName: the name words that must match (distance);
+// allTk: every typed word, corrected to the name word it matches, for the tier. Returns {dist: -1} when none fits.
+function fzLmDist(vs, lmName, allTk) {
+  let best = { dist: -1, q: 0 };
+  for (const v of vs) {
+    let worst = 0, ok = true;
+    for (const tk of lmName) {
+      let bd = -1;
+      for (const w of v.w) {
+        const d = fzWordDistM(w, tk.t);
+        if (d >= 0 && (bd < 0 || d < bd)) { bd = d; if (!d) break; }
+      }
+      if (bd < 0) { ok = false; break; }
+      if (bd > worst) worst = bd;
+    }
+    if (!ok || (best.dist >= 0 && worst > best.dist)) continue;
+    const corr = allTk.map(tk => {
+      let bw = tk.t, bd = 99;
+      for (const w of v.w) { const d = fzWordDistM(w, tk.t); if (d >= 0 && d < bd) { bd = d; bw = w; if (!d) break; } }
+      return bw;
+    }).join(' ');
+    const q = fsqQuality(v.n, fsqCanon(corr));
+    if (best.dist < 0 || worst < best.dist || q > best.q) best = { dist: worst, q };
+  }
+  return best;
 }
 function fsqCanon(str) {   // "one utama" and "1 utama" compare equal
   return str.split(' ').map(w => (/^(one|two|three|four|five|six|seven|eight|nine)$/.test(w) ? FSQ_ALIAS[w] : w)).join(' ');
@@ -1982,7 +2110,7 @@ async function searchPlaces(query, center, opts) {
   const limit = opts.limit > 0 ? opts.limit : 12;
   const bias = Number.isFinite(opts.bias) ? opts.bias : 1;
   if (typeof opts.getIndex !== 'function' || typeof opts.getShard !== 'function') return [];
-  const P = QU.parseQuery(query == null ? '' : String(query));
+  const P = QU.parseQuery(query == null ? '' : String(query), { noTypoCat: !!opts.noTypo });
   const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
 
   // Category only ("masjid", "hospital near me"): nearest rows of the category from the tiles, when published.
@@ -2044,33 +2172,41 @@ async function searchPlaces(query, center, opts) {
   const boostOf = new Map();
   if (boosts) hits.forEach((it, i) => boostOf.set(it, boosts[i]));
   const hitIds = new Set(hits.map(it => it.name + '|' + it.lat + '|' + it.lon));
-  const pushShard = (it, dist) => {
+  let fzMerge = false;   // no strict hit is good: typo hits join on the normal scale (see below)
+  const pushShard = (it, dist, corr) => {
     const cat = String(it.row[4] == null ? '' : it.row[4]);
     const nameI = !!P.nameRe && P.nameRe.test(it.norm);
     const hitI = P.categoryIntent ? (P.categoryIntent.test(cat) || (nameI && (!cat || FSQ_GENERIC_CAT.test(cat)))) : nameI;
     const d = hasCenter ? haversineKm(center, it) : null;
-    let score = tierOf(fsqCanon(it.norm)) + fsqCatAdj(it.row, hitI) - (d == null ? 0 : bias * 2.2 * d / (d + 60));
+    // a typo hit is also tiered on its corrected phrase ("mcdonals" reads as "mcdonald", "penag airport" as "penang airport")
+    let tier = tierOf(fsqCanon(it.norm));
+    if (dist > 0 && corr) tier = Math.max(tier, fsqQuality(fsqCanon(it.norm), fsqCanon(corr)));
+    let score = tier + fsqCatAdj(it.row, hitI) - (d == null ? 0 : bias * 2.2 * d / (d + 60));
     if (P.catOnly && nameI) score += FSQ_CATONLY_NAME;   // "surau": a row named Surau ranks above a mosque that only shares the category
     if (dist === 0) {
       score += boostOf.get(it) || 0;
-    } else if (hitI && P.intentIds.length) {
-      // typo hit of the category the query names: it competes with the strict name-only rows (see below)
+    } else if ((hitI && P.intentIds.length) || fzMerge) {
+      // typo hit that competes on the normal scale: the category the query names, or no strict hit is good
       score = score - 1.5 * dist;
     } else {
       score = FZ_BAND + score - 1.5 * dist;   // typo hit: always below strict hits
     }
-    scored.push({ lm: false, lat: it.lat, lon: it.lon, name: it.name, norm: it.norm, cat, row: it.row, d, score, hitI, typo: dist > 0 });
+    scored.push({ lm: false, lat: it.lat, lon: it.lon, name: it.name, norm: it.norm, cat, row: it.row, d, score, hitI, tier, typo: dist > 0 });
   };
   hits.forEach(it => pushShard(it, 0));
   // The query names a category: name-only strict rows drop back (FSQ_NONCAT_DEMOTE); typo rows of that category join on the normal scale.
-  const catHitStrict = scored.some(s => s.hitI && !s.typo);
   if (P.intentIds.length && req.length) {
     for (const s of scored) if (!s.typo && !s.hitI) s.score -= FSQ_NONCAT_DEMOTE;
   }
-  if ((scored.length < 3 || (P.intentIds.length && req.length && !catHitStrict)) && req.length) {
+  // Strict hits are "good" when they are near (or the map has no centre) and either start with the query phrase or are the category it names.
+  // The typo pass runs when there are few strict hits or none is good; it then merges on the normal scale (fzMerge).
+  const goodStrict = scored.some(s => !s.typo && (s.d == null || s.d <= FZ_FAR_KM) && (s.tier >= 2.5 || s.hitI));
+  const fzOn = !!req.length && (scored.length < 3 || !goodStrict || (P.intentIds.length && !scored.some(s => s.hitI && !s.typo)));
+  fzMerge = fzOn && !goodStrict;
+  if (fzOn) {
     for (const f of await fsqFuzzyItems(req.map(tk => tk.t), keys, opts.getShard)) {
       if (f.dist === 0 && hitIds.has(f.it.name + '|' + f.it.lat + '|' + f.it.lon)) continue;
-      pushShard(f.it, f.dist);
+      pushShard(f.it, f.dist, f.corr);
     }
   }
 
@@ -2109,13 +2245,23 @@ async function searchPlaces(query, center, opts) {
         if (strict && (!best || weakOnly || q > best)) { best = q; weakOnly = false; }
         else if (!strict && !best) { best = q; weakOnly = true; }
       }
+      // No exact or prefix alias, and no strict hit is good: a landmark name or alias within typo distance (typoPen).
+      let typoPen = 0;   // a typo-matched landmark gets no curated bonus: it ranks on the same scale as the typo shard rows
+      if (!best && fzMerge && lmName.length) {
+        const tl = fzLmDist(m.vs, lmName, req);
+        if (tl.dist > 0 && (lmLoc.length === 0 || lmClose || m.vs.some(v => lmLoc.every(tk => fsqTokHit(v.w, tk))))) {
+          best = Math.max(1, tl.q);   // tier of the alias or name the typo corrects to ("sentral" is the alias of KL Sentral)
+          typoPen = 1.5 * tl.dist;
+        }
+      }
       if (!best) continue;
       const norm = m.norm || (m.norm = normWords(m.name).join(' '));
       const cat = String(m.cat || '');
       const d = hasCenter ? haversineKm(center, m) : null;
       // a category bonus only for landmarks in the rider's region: a "mall" typed in Johor must not lift a mall in Selangor
       const intentL = (P.categoryIntent ? P.categoryIntent.test(cat) : (!!P.nameRe && P.nameRe.test(norm))) && (d == null || d <= FSQ_LM_INTENT_KM);
-      const score = best + FSQ_LM_BASE + (best >= 2.5 ? 0.6 : 0) + (intentL ? 0.8 : 0) - (weakOnly ? FSQ_LM_WEAK : 0) - (d == null ? 0 : bias * 0.8 * d / (d + 300)) - (d != null && d > FSQ_LM_INTENT_KM ? FSQ_LM_FAR : 0);
+      const lmBonus = typoPen ? 0 : FSQ_LM_BASE + (best >= 2.5 ? 0.6 : 0);
+      const score = best + lmBonus + (intentL ? 0.8 : 0) - (weakOnly ? FSQ_LM_WEAK : 0) - typoPen - (d == null ? 0 : bias * 0.8 * d / (d + 300)) - (d != null && d > FSQ_LM_INTENT_KM ? FSQ_LM_FAR : 0);
       scored.push({ lm: true, lat: m.lat, lon: m.lon, name: m.name, norm, base: m.base || norm, vn: m.vs.map(v => v.n), cat, row: null, d, score });
     }
   }
@@ -2164,6 +2310,12 @@ async function searchPlaces(query, center, opts) {
     }
   }
   kept.sort((a, b) => a.ord - b.ord);
+  // A category read from a misspelt form ("stesen minyk") must find a place nearby. When the top result is far, the words
+  // are read as a name instead ("pasr malam" is the name of a night market, not the category).
+  if (P.typoCat && hasCenter && !opts.noTypo && !(kept.length && kept[0].d <= FZ_FAR_KM)) {
+    const alt = await searchPlaces(query, center, Object.assign({}, opts, { noTypo: true }));
+    if (alt.length) return alt;
+  }
 
   return kept.map(s => ({
     name: s.name,
