@@ -19,7 +19,7 @@ body.dark{--bg:#0b1220;--fg:#e2e8f0;--mut:#94a3b8;--line:#1e293b;--card:#111a2e;
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;overflow:hidden;font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg)}
 #map{position:fixed;inset:0;z-index:0}
-#hdTap{position:fixed;inset:0;z-index:5;display:none}body.hv #hdTap{display:block}body.hv #map{pointer-events:none;will-change:transform}body.vtr #map{transition:transform .7s cubic-bezier(.4,0,.2,1)}
+#hdTap{position:fixed;inset:0;z-index:5;display:none}body.hv #hdTap{display:block}body.hv{background:#e5e7eb}body.dark.hv{background:#1f2937}body.hv #map{pointer-events:none;will-change:transform}body.vtr #map{transition:transform .7s cubic-bezier(.4,0,.2,1)}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 input{font:inherit;color:var(--fg)}
 .hidden{display:none!important}
@@ -569,7 +569,7 @@ function meHTML(){const k=avKind();return `<div class="me-dot"></div><svg class=
 function meBind(){const w=meMarker.getElement();meS.el={dot:w.querySelector('.me-dot'),nav:w.querySelector('.me-nav'),av:w.querySelector('.me-av')}}
 function meVis(){if(!meS.el)return;const custom=avKind()!=='arrow',mv=!!meS.moving;
   meS.el.dot.style.display=(mv||custom)?'none':'';meS.el.nav.style.display=mv?'block':'none';meS.el.av.style.display=custom?'block':'none';
-  meS.el.nav.style.transform=`rotate(${viewOn?0:meS.hd}deg)`}
+  meRot()}
 // Pet and face avatars stay upright (a face upside down is not cute); a ring with a small chevron around them points the heading.
 function applyAvatar(){if(!meMarker)return;meMarker.getElement().innerHTML=meHTML();meBind();meVis()}
 function setAvatar(k){S.avatar=k;save('avatar');applyAvatar()}
@@ -605,11 +605,12 @@ function openLook(){const sw=Object.keys(ROUTE_COLORS),avs=[['arrow','avArrow'],
   $('#lkFile').onchange=async e=>{const f=e.target.files&&e.target.files[0];if(!f)return;
     try{const url=await loadFace(f);if(!storeFace(url))throw new Error('bad');$('#lkDel').classList.remove('hidden');const b=document.querySelector('[data-av="face"]');if(b)b.innerHTML=prev('face');mark()}catch(err){toast(T('avBad'))}}}
 const meS={lat:null,lon:null,hd:0,moving:false,raf:0,from:null,to:null,t0:0,dur:1000,lastP:null,lastT:0,el:null};
+function meRot(){if(!meS.el)return;const hd=meS.hd||0;meS.el.nav.style.transform=`rotate(${hd}deg)`;const up=viewOn?`rotate(${hd}deg)`:'';meS.el.av.style.transform=up;meS.el.dot.style.transform=up}/* inside the turned map: counter-rotate so the arrow points up the screen and photos stay upright */
 const angD=(a,b)=>((b-a+540)%360)-180;
 function meFrame(now){const k=Math.min(1,(now-meS.t0)/meS.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
   meS.lat=meS.from[0]+(meS.to[0]-meS.from[0])*e;meS.lon=meS.from[1]+(meS.to[1]-meS.from[1])*e;meS.hd=(meS.hd0+angD(meS.hd0,meS.hdT)*e+360)%360;
   meMarker.setLatLng([meS.lat,meS.lon]);accCircle.setLatLng([meS.lat,meS.lon]);
-  rotateMap(meS.hd);if(meS.el)meS.el.nav.style.transform=`rotate(${viewOn?0:meS.hd}deg)`;
+  rotateMap(meS.hd);if(meS.el)meRot();
   if(st.nav&&st.follow)followTo(meS.lat,meS.lon,map.getZoom(),false);
   meS.raf=k<1?requestAnimationFrame(meFrame):0}
 function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.nav.bear!=null)hd=st.nav.bear;
@@ -754,6 +755,14 @@ async function searchPlaces(query, center, opts) {
     const its = fsqPrepare(k, r);
     if (its.some(it => fsqMatches(it.words, qTokens))) { key = k; rows = r; items = its; break; }
   }
+  if (qTokens.length === 1 && qTokens[0].length === 3) {
+    const base = qTokens[0];
+    const ex = await Promise.all('abcdefghijklmnopqrstuvwxyz0123456789'.split('').map(async c => {
+      let r; try { r = await opts.getShard(base + c); } catch (e) { r = null; }
+      return Array.isArray(r) && r.length ? fsqPrepare(base + c, r) : [];
+    }));
+    ex.forEach(a => { if (a.length) { items = items.concat(a); if (!key) key = base; } });
+  }
   if (!key) return [];
   const qNorm = qTokens.join(' ');
   const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
@@ -766,7 +775,7 @@ async function searchPlaces(query, center, opts) {
     let score = q;
     if (hasCenter) {
       d = haversineKm(center, it);
-      score = q - bias * 0.5 * d / (d + 100);
+      score = q - bias * 1.5 * d / (d + 100);
     }
     scored.push({ it, d, score });
   }
@@ -868,7 +877,14 @@ function setDest(p){st.dest=p;qD.value=p.name;$('#btnClear').classList.remove('h
 $('#btnClear').onclick=()=>{qD.value='';st.dest=null;st.routes=[];routeLayer.clearLayers();poiLayer.clearLayers();if(destMarker){map.removeLayer(destMarker);destMarker=null}$('#btnClear').classList.add('hidden');renderSheet();qD.focus()};
 $('#btnSwap').onclick=()=>{if(!st.dest)return;const o=st.origin||(st.here&&{lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true});if(!o)return;
   const d=st.dest;st.origin={...d,gps:false};qO.value=d.name;setDest(o.gps?{lat:o.lat,lon:o.lon,name:T('myLoc')}:o);if(o.gps)qD.value=T('myLoc');computeRoutes()};
-map.on('contextmenu',async e=>{if(st.nav)return;const {lat,lng}=e.latlng;setDest({lat,lon:lng,name:T('pinned')});computeRoutes();const n=await reverse(lat,lng);if(st.dest&&st.dest.lat===lat){st.dest.name=n;qD.value=n;S.recent[0]&&(S.recent[0].name=n);save('recent');renderSheet()}});
+let _pinT=0;
+async function dropPin(latlng){if(st.nav||Date.now()-_pinT<1200)return;_pinT=Date.now();const {lat,lng}=latlng;setDest({lat,lon:lng,name:T('pinned')});computeRoutes();const n=await reverse(lat,lng);if(st.dest&&st.dest.lat===lat){st.dest.name=n;qD.value=n;S.recent[0]&&(S.recent[0].name=n);save('recent');renderSheet()}}
+map.on('contextmenu',e=>dropPin(e.latlng));
+/* iPhone Safari does not fire contextmenu on a long press, so time it ourselves */
+(()=>{let t=0,x=0,y=0;const c=map.getContainer();
+  c.addEventListener('touchstart',e=>{clearTimeout(t);if(e.touches.length!==1||st.nav)return;x=e.touches[0].clientX;y=e.touches[0].clientY;t=setTimeout(()=>{const r=c.getBoundingClientRect();dropPin(map.containerPointToLatLng([x-r.left,y-r.top]))},650)},{passive:true});
+  c.addEventListener('touchmove',e=>{if(Math.hypot(e.touches[0].clientX-x,e.touches[0].clientY-y)>10)clearTimeout(t)},{passive:true});
+  ['touchend','touchcancel'].forEach(n=>c.addEventListener(n,()=>clearTimeout(t),{passive:true}))})();
 
 /* ---------- routing ---------- */
 const OSRM='https://router.project-osrm.org/route/v1/driving/';
@@ -1200,7 +1216,11 @@ sheet.addEventListener('pointerup',e=>{if(!gy)return;const d=e.clientY-gy.y,mv=g
   if(!mv)st.sheetMin=!st.sheetMin;else if(d>20)st.sheetMin=true;else if(d<-20)st.sheetMin=false;else return;positionFabs()});
 sheet.addEventListener('pointercancel',()=>{gy=null});
 function applySheetMin(){sheet.classList.toggle('min',!!st.sheetMin&&!!st.dest)}
-function positionFabs(){applySheetMin();requestAnimationFrame(()=>{const h=document.body.classList.contains('navigating')?$('#navBot').offsetHeight:sheet.offsetHeight;$('#fabs').style.bottom=`calc(${h+14}px)`})}
+function positionFabs(){applySheetMin();requestAnimationFrame(()=>{const nav=document.body.classList.contains('navigating'),fb=$('#fabs');let b=(nav?$('#navBot').offsetHeight:sheet.offsetHeight)+14;
+  if(nav&&isLand())b=14;/* landscape: the panels sit on the left, nothing is under the buttons */
+  const top=nav?8:($('#top')?$('#top').getBoundingClientRect().bottom+8:8),room=innerHeight-fb.offsetHeight-top;
+  if(b>room)b=Math.max(8,room);/* never push the column off the top of a short screen */
+  fb.style.bottom=`${b}px`})}
 
 /* ---------- voice ---------- */
 let voices=[];function loadVoices(){voices=speechSynthesis?speechSynthesis.getVoices():[]}
@@ -1219,7 +1239,7 @@ const isLand=()=>innerWidth>innerHeight&&innerHeight<=520;
 function anchorOffX(){if(!isLand())return 0;const W=innerWidth,r=Math.max($('#navTop').getBoundingClientRect().right,$('#navBot').getBoundingClientRect().right);return Math.round(Math.max(0,Math.min(W*.4,(r+8)/2)))}
 function anchorOff(){if(isLand())return 0;const H=innerHeight,tb=Math.max(0,$('#navTop').getBoundingClientRect().bottom),bt=Math.min(H,$('#navBot').getBoundingClientRect().top);return Math.round(Math.max(-H*.3,Math.min(H*.3,(tb+bt)/2-H/2)))}
 /* Heading-up / 3D view: the Leaflet map is oversized and CSS-rotated around the position dot, so the road ahead is always "up". */
-const VK={h:.35,t:.6};
+const VK={h:.5,t:.6};
 function setOrigin(){if(!viewOn)return;const m=$('#map'),k=VK[viewOn],W=innerWidth,H=innerHeight;m.style.transformOrigin=`${W*k+W/2+_offX}px ${H*k+H/2+_off}px`}
 let _vtT=0;
 function viewTf(hd,v){return `perspective(900px) rotateX(${v==='t'?48:0}deg) rotate(${-hd}deg)`}
@@ -1265,6 +1285,9 @@ function endNav(){relClear();relShow('');if(st.nav)logEv('end',{left:Math.round(
   if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}}
 $('#btnEnd').onclick=endNav;
 $('#hdTap').onclick=()=>{st.follow=false;applyView()};
+(()=>{let x0=0,y0=0,one=false;const el=$('#hdTap');
+  el.addEventListener('touchstart',e=>{one=e.touches.length===1;if(one){x0=e.touches[0].clientX;y0=e.touches[0].clientY}},{passive:true});
+  el.addEventListener('touchmove',e=>{if(one&&e.touches.length===1&&Math.hypot(e.touches[0].clientX-x0,e.touches[0].clientY-y0)>18){one=false;st.follow=false;applyView()}},{passive:true})})();
 function zoomBy(d){const base=zoomSaved?map.getZoom():Math.round(map.getZoom()),z=Math.max(3,Math.min(19,(zoomSaved?Math.round(base*2)/2:base)+d));
   if(zoomSaved){smoothZoom(z);return}
   setZ(z)}
@@ -1272,10 +1295,10 @@ $('#btnZin').onclick=()=>zoomBy(1);$('#btnZout').onclick=()=>zoomBy(-1);
 /* pinch: one handler for both north-up and heading-up. Continuous (zoom follows the fingers), Leaflet's own touch zoom is off so the two can't fight. */
 (()=>{try{map.touchZoom.disable();map.doubleClickZoom.disable()}catch(e){}
   let d0=0,z0=0,tmp=false;const dist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-  const ok=e=>e.target&&e.target.closest&&e.target.closest('#map,#hdTap');
-  document.addEventListener('touchstart',e=>{if(e.touches.length===2&&ok(e)){d0=dist(e);z0=map.getZoom();cancelAnimationFrame(zoomAnimRaf);if(!zoomSaved){tmp=true;zoomMode(true)}}else d0=0},{passive:true});
+  const okT=t=>t&&t.target&&t.target.closest&&t.target.closest('#map,#hdTap'),ok=e=>okT(e);
+  document.addEventListener('touchstart',e=>{if(e.touches.length===2&&(okT(e.touches[0])||okT(e.touches[1]))){d0=dist(e);z0=map.getZoom();cancelAnimationFrame(zoomAnimRaf);if(!zoomSaved){tmp=true;zoomMode(true)}}else d0=0},{passive:true});
   document.addEventListener('touchmove',e=>{if(e.touches.length!==2||!d0)return;setZ(z0+Math.log2(dist(e)/d0))},{passive:true});
-  document.addEventListener('touchend',e=>{if(e.touches.length<2){d0=0;if(tmp){tmp=false;zoomMode(false)}}},{passive:true});
+  document.addEventListener('touchend',e=>{if(e.touches.length<2){d0=0;if(tmp){tmp=false;zoomMode(false);if(st.nav&&st.follow&&st.here)followTo(meS.lat!=null?meS.lat:st.here.lat,meS.lon!=null?meS.lon:st.here.lon,map.getZoom(),false)}}},{passive:true});
   document.addEventListener('dblclick',e=>{if(ok(e)){zoomBy(1)}})})();
 $('#btnView').onclick=()=>{S.view=S.view==='n'?'h':S.view==='h'?'t':'n';save('view');st.follow=true;applyView();updView();toast({n:T('vN'),h:T('vH'),t:T('v3')}[S.view])};
 function updView(){$('#btnView').classList.toggle('on',S.view!=='n');$('#btnView svg').style.transform=S.view==='n'?'':'rotate(-35deg)'}updView();
@@ -1299,7 +1322,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProg
   const dist=Math.max(0,s.along-along);const remD=Math.max(0,r.total-along);
   if(S.tomtom&&Date.now()-(n.ttAt||0)>300000&&!n.ttBusy){n.ttAt=Date.now();refreshNavEta()}
   const remT=r.duration*(remD/(r.total||1));n.remT=remT;
-  $('#nIco').innerHTML=arrow(s,52,'#fff');$('#nDist').textContent=fmtDist(dist);$('#nText').textContent=instr(s);
+  $('#nIco').innerHTML=arrow(s,52,'#fff');$('#nDist').textContent=fmtDist(dist);$('#nText').textContent=(s.maneuver.type==='arrive'&&remD>80)?instr({...s,maneuver:{type:'continue',modifier:'straight'}}):instr(s);
   const nx=r.steps.slice(si+1).find(x=>!trivial(x));const th=$('#then');if(nx&&nx.along-s.along<400&&s.maneuver.type!=='arrive'){th.innerHTML=`${T('then')} ${arrow(nx,18,'#fff')}`;th.classList.remove('hidden')}else th.classList.add('hidden');
   $('#nEta').textContent=fmtClock(new Date(Date.now()+remT*1000));$('#nRem').textContent=`${fmtDur(remT)} · ${fmtDist(remD)}`;
   const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);SC.tick(n,r,along,v);
@@ -1449,6 +1472,18 @@ const REL={MAX_AGE:3*3600e3,NEAR_M:1500,SAVE_MS:5000,RE_MIN:8000,MAX_ACC:60,OFF_
 Object.assign(I.ms,{resumeT:'Sambung perjalanan?',resumeQ:d=>`Perjalanan ke ${d} belum selesai. Sambung navigasi?`,resumeYes:'Sambung',resumeNo:'Buang',
   relOffline:'Tiada internet: tidak dapat kira semula laluan. Teruskan ke arah laluan.',relOfflineV:'Tiada sambungan. Tidak dapat mengira semula laluan. Sila kembali ke laluan.',
   relRetry:'Tidak dapat kira semula laluan. Mencuba lagi sebentar lagi.',relRetryV:'Laluan baharu belum dapat dikira. Sila kembali ke laluan.'});
+Object.assign(I.zh,{scSet:'测速照相机提醒',scNote:'并非所有照相机都有列出，请遵守路牌。数据：© OpenStreetMap 贡献者 (ODbL)。',
+  scBanner:(d,l,s)=>l!=null?`前方测速照相机 ${d} · 限速 ${l} · 您 ${s} 公里/时`:`前方测速照相机 ${d}`,
+  scSay:(d,l,o)=>`前方${d}有测速照相机${l!=null?'，限速每小时'+l+'公里':''}${o?'。请减速':''}`,
+  resumeT:'继续行程？',resumeQ:d=>`前往${d}的行程尚未完成。继续导航吗？`,resumeYes:'继续',resumeNo:'放弃',
+  relOffline:'没有网络：无法重新规划路线。请朝路线方向前进。',relOfflineV:'没有网络连接，无法重新规划路线。请回到路线上。',
+  relRetry:'无法重新规划路线，稍后再试。',relRetryV:'暂时无法规划新路线。请回到路线上。'});
+Object.assign(I.ta,{scSet:'வேகக் கேமரா எச்சரிக்கை',scNote:'எல்லா கேமராக்களும் பட்டியலிடப்படவில்லை; பலகைகளைப் பின்பற்றுங்கள். தரவு: © OpenStreetMap பங்களிப்பாளர்கள் (ODbL).',
+  scBanner:(d,l,s)=>l!=null?`வேகக் கேமரா ${d} · வரம்பு ${l} · நீங்கள் ${s} கி.மீ/ம`:`வேகக் கேமரா ${d}`,
+  scSay:(d,l,o)=>`முன்னால் ${d} தூரத்தில் வேகக் கேமரா${l!=null?', வேக வரம்பு மணிக்கு '+l+' கிலோமீட்டர்':''}${o?'. வேகத்தைக் குறையுங்கள்':''}`,
+  resumeT:'பயணத்தைத் தொடரவா?',resumeQ:d=>`${d} நோக்கிய பயணம் முடியவில்லை. வழிசெலுத்தலைத் தொடரவா?`,resumeYes:'தொடர்',resumeNo:'நீக்கு',
+  relOffline:'இணையம் இல்லை: வழியை மீண்டும் கணக்கிட முடியவில்லை. வழியின் திசையில் செல்லுங்கள்.',relOfflineV:'இணைப்பு இல்லை. வழியை மீண்டும் கணக்கிட முடியவில்லை. தயவுசெய்து வழிக்குத் திரும்புங்கள்.',
+  relRetry:'வழியை மீண்டும் கணக்கிட முடியவில்லை. சிறிது நேரத்தில் மீண்டும் முயல்கிறது.',relRetryV:'புதிய வழியை இன்னும் கணக்கிட முடியவில்லை. தயவுசெய்து வழிக்குத் திரும்புங்கள்.'});
 Object.assign(I.en,{resumeT:'Resume trip?',resumeQ:d=>`Your trip to ${d} wasn't finished. Resume navigation?`,resumeYes:'Resume',resumeNo:'Discard',
   relOffline:"Offline: can't reroute. Keep heading back to the route.",relOfflineV:'No connection. Cannot reroute. Please head back to the route.',
   relRetry:"Can't reroute right now. Retrying shortly.",relRetryV:'The new route could not be calculated yet. Please head back to the route.'});
