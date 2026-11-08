@@ -737,6 +737,103 @@ function fsqTokMatch(w, t) {
 function fsqMatches(words, qTokens) {
   return qTokens.every(t => words.some(w => fsqTokMatch(w, t)));
 }
+// Typo tolerance. Used only when strict matching finds fewer than 3 places (see searchPlaces).
+// Fuzzy scores sit in a band (FZ_BAND) far below every strict score, so strict hits always rank first.
+const FZ_BAND = -100;
+const FZ_NEAR = { q: 'wa', w: 'qes', e: 'wrd', r: 'etf', t: 'ryg', y: 'tuh', u: 'yij', i: 'uok', o: 'ipl', p: 'o',
+  a: 'qsz', s: 'awdx', d: 'sefc', f: 'drgv', g: 'fthb', h: 'gyjn', j: 'hukm', k: 'jilo', l: 'kop', z: 'asx',
+  x: 'zsd', c: 'xdfv', v: 'cfgb', b: 'vghn', n: 'bhjm', m: 'njk' };
+// Optimal-string-alignment distance; returns max + 1 as soon as the distance must exceed max.
+function fzDL(a, b, max) {
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > max) return max + 1;
+  let pp = null, p = [];
+  for (let j = 0; j <= lb; j++) p[j] = j;
+  for (let i = 1; i <= la; i++) {
+    const c = [i];
+    let rowMin = i;
+    for (let j = 1; j <= lb; j++) {
+      let v = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, pp[j - 2] + 1);
+      c[j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    pp = p; p = c;
+  }
+  return p[lb] <= max ? p[lb] : max + 1;
+}
+// Word-level distance between a typed token and one name word, prefix-aware.
+// -1 no match; 0 exact or prefix; 1 or 2 typo. Allowed: 1 edit for 4-7 chars, 2 for 8+.
+function fzWordDist(w, t) {
+  if (fsqTokMatch(w, t)) return 0;
+  const k = t.length >= 8 ? 2 : t.length >= 4 ? 1 : 0;
+  if (!k || /\d/.test(t)) return -1;
+  let miss = 0;
+  for (const ch of t) if (!w.includes(ch) && ++miss > k) return -1;
+  let best = -1;
+  for (let p = Math.max(1, t.length - k); p <= Math.min(w.length, t.length + k); p++) {
+    const d = fzDL(t, w.slice(0, p), k);
+    if (d <= k && (best < 0 || d < best)) best = d;
+  }
+  return best;
+}
+// Worst token distance over a place's words (each token takes its best word); -1 if a token matches nothing.
+function fzItemDist(words, qTokens) {
+  let worst = 0;
+  for (const t of qTokens) {
+    let best = -1;
+    for (const w of words) {
+      const d = fzWordDist(w, t);
+      if (d >= 0 && (best < 0 || d < best)) { best = d; if (!d) break; }
+    }
+    if (best < 0) return -1;
+    if (best > worst) worst = best;
+  }
+  return worst;
+}
+// Single-edit variants of the 4-char shard key of a typed token (a typo inside its first 4 chars
+// makes the token point at the wrong shard). Order: transpositions, then a char dropped from the
+// first 5 chars (an extra letter typed), then QWERTY-neighbour substitutions.
+function fzKeyVariants(t) {
+  const k = t.slice(0, 4), out = [];
+  const add = s => { if (s.length === 4 && s !== k && !out.includes(s)) out.push(s); };
+  for (let i = 0; i + 1 < k.length; i++) add(k.slice(0, i) + k[i + 1] + k[i] + k.slice(i + 2));
+  const five = t.slice(0, 5);
+  for (let i = 0; i < five.length - 1; i++) add(five.slice(0, i) + five.slice(i + 1));
+  for (let i = 0; i < k.length; i++) for (const c of FZ_NEAR[k[i]] || '') add(k.slice(0, i) + c + k.slice(i + 1));
+  return out;
+}
+// Typo pass: items of the shards for the typed keys plus up to 12 probed variant keys (a missing
+// shard is a cached empty list). Returns [{it, dist}]; dist 0 means an exact word found in another shard.
+const FZ_MAX_PROBE = 12;
+async function fsqFuzzyItems(qTokens, keyList, getShard) {
+  const keys = [], seen = new Set();
+  const add = k => { if (!seen.has(k)) { seen.add(k); keys.push(k); } };
+  keyList.forEach(add);
+  let probes = 0;
+  for (const t of qTokens) {
+    if (t.length < 4) continue;
+    for (const v of fzKeyVariants(t)) {
+      if (probes >= FZ_MAX_PROBE) break;
+      if (!seen.has(v)) { add(v); probes++; }
+    }
+  }
+  const loaded = await Promise.all(keys.map(k => Promise.resolve().then(() => getShard(k)).then(r => [k, r], () => [k, null])));
+  const out = [], seenRow = new Set();
+  for (const [k, r] of loaded) {
+    if (!Array.isArray(r) || !r.length) continue;
+    for (const it of fsqPrepare(k, r)) {
+      const dist = fzItemDist(it.all, qTokens);
+      if (dist < 0) continue;
+      const id = it.name + '|' + it.lat + '|' + it.lon;
+      if (seenRow.has(id)) continue;
+      seenRow.add(id);
+      out.push({ it, dist });
+    }
+  }
+  return out;
+}
 function fsqCanon(str) {   // "one utama" and "1 utama" compare equal
   return str.split(' ').map(w => (/^(one|two|three|four|five|six|seven|eight|nine)$/.test(w) ? FSQ_ALIAS[w] : w)).join(' ');
 }
@@ -790,13 +887,11 @@ async function searchPlaces(query, center, opts) {
     }));
     ex.forEach(a => { if (a.length) { items = items.concat(a); if (!key) key = base; } });
   }
-  if (!key) return [];
   const qNorm = fsqCanon(qTokens.join(' '));
   const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
 
   const scored = [];
-  for (const it of items) {
-    if (!fsqMatches(it.all, qTokens)) continue;
+  const pushScored = (it, dist) => {
     const q = fsqQuality(fsqCanon(it.norm), qNorm) + fsqCatAdj(it.row);
     let d = null;
     let score = q;
@@ -804,8 +899,14 @@ async function searchPlaces(query, center, opts) {
       d = haversineKm(center, it);
       score = q - bias * 2.2 * d / (d + 60);
     }
+    if (dist > 0) score = FZ_BAND + score - 1.5 * dist;   // typo hit: always below strict hits
     scored.push({ it, d, score });
+  };
+  for (const it of items) if (fsqMatches(it.all, qTokens)) pushScored(it, 0);
+  if (scored.length < 3) {
+    for (const f of await fsqFuzzyItems(qTokens, keyList, opts.getShard)) pushScored(f.it, f.dist);
   }
+  if (!scored.length) return [];
 
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
