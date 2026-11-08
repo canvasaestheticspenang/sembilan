@@ -1271,11 +1271,11 @@ function zoomBy(d){const base=zoomSaved?map.getZoom():Math.round(map.getZoom()),
 $('#btnZin').onclick=()=>zoomBy(1);$('#btnZout').onclick=()=>zoomBy(-1);
 /* pinch: one handler for both north-up and heading-up. Continuous (zoom follows the fingers), Leaflet's own touch zoom is off so the two can't fight. */
 (()=>{try{map.touchZoom.disable();map.doubleClickZoom.disable()}catch(e){}
-  let d0=0,z0=0;const dist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  let d0=0,z0=0,tmp=false;const dist=e=>Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
   const ok=e=>e.target&&e.target.closest&&e.target.closest('#map,#hdTap');
-  document.addEventListener('touchstart',e=>{if(e.touches.length===2&&ok(e)){d0=dist(e);z0=map.getZoom();cancelAnimationFrame(zoomAnimRaf)}else d0=0},{passive:true});
+  document.addEventListener('touchstart',e=>{if(e.touches.length===2&&ok(e)){d0=dist(e);z0=map.getZoom();cancelAnimationFrame(zoomAnimRaf);if(!zoomSaved){tmp=true;zoomMode(true)}}else d0=0},{passive:true});
   document.addEventListener('touchmove',e=>{if(e.touches.length!==2||!d0)return;setZ(z0+Math.log2(dist(e)/d0))},{passive:true});
-  document.addEventListener('touchend',()=>{d0=0},{passive:true});
+  document.addEventListener('touchend',e=>{if(e.touches.length<2){d0=0;if(tmp){tmp=false;zoomMode(false)}}},{passive:true});
   document.addEventListener('dblclick',e=>{if(ok(e)){zoomBy(1)}})})();
 $('#btnView').onclick=()=>{S.view=S.view==='n'?'h':S.view==='h'?'t':'n';save('view');st.follow=true;applyView();updView();toast({n:T('vN'),h:T('vH'),t:T('v3')}[S.view])};
 function updView(){$('#btnView').classList.toggle('on',S.view!=='n');$('#btnView svg').style.transform=S.view==='n'?'':'rotate(-35deg)'}updView();
