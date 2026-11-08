@@ -183,6 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--release", help="release date YYYY-MM-DD (default: newest on S3)")
     ap.add_argument("--keys-in-index", action="store_true", help="list every shard key in index.json (large; the app does not need it)")
     ap.add_argument("--input", help="parquet file, glob or directory to read instead of S3")
+    ap.add_argument("--overture", nargs="?", const="latest", help="also add Overture Maps places and street names (release id, default: latest)")
+    ap.add_argument("--overture-places-input", help="local parquet glob for Overture places (testing)")
+    ap.add_argument("--overture-streets-input", help="local parquet glob for Overture road segments (testing)")
     args = ap.parse_args(argv)
 
     if args.release is not None and not RELEASE_RE.match(args.release):
@@ -223,6 +226,20 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"Failed to read {source}: {e}")
     print(f"rows after MY/open/name/coords filter: {len(rows)}")
 
+    if args.overture or args.overture_places_input or args.overture_streets_input:
+        import overture
+        rel = args.overture if args.overture and args.overture != "latest" else None
+        if not (args.overture_places_input and args.overture_streets_input):
+            rel = rel or overture.latest_release()
+        print(f"overture release: {rel or 'local files'}")
+        try:
+            con.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
+            ov_places = overture.place_rows(con, rel, args.overture_places_input)
+            ov_streets = overture.street_rows(con, rel, args.overture_streets_input)
+        except duckdb.Error as e:
+            raise SystemExit(f"Failed to read Overture ({e})")
+        print(f"overture places: {len(ov_places)}  street names: {len(ov_streets)}")
+        rows = list(rows) + ov_places + ov_streets
     records, no_keys = build_records(rows)
     kept, dropped_dedupe = dedupe(records)
 

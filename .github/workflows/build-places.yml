@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: ""
+      overture:
+        description: "Also add Overture Maps places and street names (newest release)."
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -30,11 +35,15 @@ jobs:
       - name: Build search shards
         env:
           RELEASE: ${{ inputs.release }}
+          OVERTURE: ${{ inputs.overture }}
           HF_TOKEN: ${{ secrets.FSQ_HUGGINGFACE }}
         run: |
           ARGS=(--out data/places)
           if [ -n "$RELEASE" ]; then
             ARGS+=(--release "$RELEASE")
+          fi
+          if [ "$OVERTURE" = "true" ]; then
+            ARGS+=(--overture)
           fi
           python scripts/build_fsq.py "${ARGS[@]}"
 
