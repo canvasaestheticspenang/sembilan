@@ -722,8 +722,30 @@ function fsqQuality(norm, qNorm) {
 }
 
 // Every query token must prefix-match some word of the name.
+// People type "1 utama" for "One Utama", "jln" for "jalan", "tmn" for "taman" ...
+const FSQ_ALIAS = { '1': 'one', '2': 'two', '3': 'three', '4': 'four', '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
+  jln: 'jalan', jalan: 'jln', tmn: 'taman', taman: 'tmn', bdr: 'bandar', bandar: 'bdr', bkt: 'bukit', bukit: 'bkt', lrg: 'lorong', lorong: 'lrg', sri: 'seri', seri: 'sri', kg: 'kampung', kampung: 'kg' };
+Object.keys(FSQ_ALIAS).filter(k => /^\d$/.test(k)).forEach(k => { FSQ_ALIAS[FSQ_ALIAS[k]] = k; });
+function fsqTokMatch(w, t) {
+  if (/^\d$/.test(t)) return w === t || w === FSQ_ALIAS[t];       // a lone digit must be a whole word
+  if (w.startsWith(t)) return true;
+  const a = FSQ_ALIAS[t];
+  return !!a && (w === a || (a.length > 3 && w.startsWith(a)));
+}
 function fsqMatches(words, qTokens) {
-  return qTokens.every(t => words.some(w => w.startsWith(t)));
+  return qTokens.every(t => words.some(w => fsqTokMatch(w, t)));
+}
+function fsqCanon(str) {   // "one utama" and "1 utama" compare equal
+  return str.split(' ').map(w => (/^(one|two|three|four|five|six|seven|eight|nine)$/.test(w) ? FSQ_ALIAS[w] : w)).join(' ');
+}
+// Landmarks first, back-of-house junk last (toilets, loading bays, "Level 3" entries ...)
+const FSQ_BOOST = /shopping mall|airport|train station|metro station|light rail|bus station|hospital|university|stadium|theme park|monorail|ferry|terminal|hotel|market/i;
+const FSQ_JUNK = /toilet|washroom|restroom|loading|parking|conference|storage|intersection|elevator|lobby|entrance|office|meeting|smoking|atm/i;
+function fsqCatAdj(row) {
+  const c = String(row[4] || '');
+  if (FSQ_JUNK.test(c) || /\b(level|lvl|floor|block|gate)\s*\d/i.test(row[0])) return -1.2;
+  if (FSQ_BOOST.test(c)) return /hotel/i.test(c) ? 0.3 : 1.1;
+  return 0;
 }
 
 // Search places. Returns up to opts.limit (default 12) results of the shape
@@ -736,14 +758,14 @@ async function searchPlaces(query, center, opts) {
   const bias = Number.isFinite(opts.bias) ? opts.bias : 1;
   if (typeof opts.getIndex !== 'function' || typeof opts.getShard !== 'function') return [];
 
-  let qTokens = normWords(query).filter(t => t.length >= 2);
+  let qTokens = normWords(query).filter(t => t.length >= 2 || /^\d$/.test(t));
   const sq = qTokens.filter(t => !FSQ_STOPWORDS.has(t));
   if (sq.length) qTokens = sq;
   if (!qTokens.length) return [];
 
   const keyList = [];
   const seenK = new Set();
-  sigWords(String(query)).filter(t => t.length >= 2).sort((a, b) => b.length - a.length).forEach(t => {
+  sigWords(String(query)).filter(t => t.length >= 2 && !/^\d+$/.test(t)).sort((a, b) => b.length - a.length).forEach(t => {
     const k = keyOf(t);
     if (!seenK.has(k)) { seenK.add(k); keyList.push(k); }
   });
@@ -764,13 +786,13 @@ async function searchPlaces(query, center, opts) {
     ex.forEach(a => { if (a.length) { items = items.concat(a); if (!key) key = base; } });
   }
   if (!key) return [];
-  const qNorm = qTokens.join(' ');
+  const qNorm = fsqCanon(qTokens.join(' '));
   const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
 
   const scored = [];
   for (const it of items) {
     if (!fsqMatches(it.words, qTokens)) continue;
-    const q = fsqQuality(it.norm, qNorm);
+    const q = fsqQuality(fsqCanon(it.norm), qNorm) + fsqCatAdj(it.row);
     let d = null;
     let score = q;
     if (hasCenter) {

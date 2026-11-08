@@ -362,6 +362,24 @@ describe('place index search', () => {
   });
 });
 
+describe('place index search: variants and landmarks', () => {
+  const rows = [
+    ['One Utama', 3.1504, 101.6156, 'Petaling Jaya', 'Shopping Mall'],
+    ['One Utama Dessert', 3.1504, 101.6156, 'Petaling Jaya', 'Dessert Shop'],
+    ['Utamarolite', 5.41, 100.33, 'George Town', 'Lighting Store'],
+    ['Queensbay Toilet', 5.33, 100.30, 'Bayan Lepas', 'Toilet'],
+    ['Queensbay Mall', 5.3326, 100.3067, 'Bayan Lepas', 'Shopping Mall'],
+  ];
+  it('"1 utama" finds One Utama, and malls beat toilets and small shops', { timeout: TIMEOUT }, async () => {
+    await withApp({ places: { utam: rows, quee: rows } }, async (ctx) => {
+      const r = await ctx.app.geocode('1 utama');
+      assert.ok(/One Utama/.test(r[0].name), 'digit finds the word: ' + r.map((p) => p.name));
+      const q = await ctx.app.geocode('queensbay');
+      assert.ok(/Queensbay Mall/.test(q[0].name), 'mall ahead of toilet: ' + q.map((p) => p.name));
+    });
+  });
+});
+
 describe('avatar and route look', () => {
   it('removes the uploaded face photo and falls back to the arrow', { timeout: TIMEOUT }, async () => {
     await withApp({}, async (ctx) => {
