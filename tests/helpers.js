@@ -229,6 +229,9 @@ async function bootApp(opts = {}) {
       const k = url.match(/places\/([a-z0-9]+)\.json/)[1];
       return cfg.places && cfg.places[k] ? ok(cfg.places[k]) : notFound();
     }
+    if (url.includes('data/landmarks.json')) {
+      return cfg.landmarks ? ok(cfg.landmarks) : notFound();
+    }
     if (url.includes('data/cameras.json')) {
       cameraFetches++;
       return cfg.cameras ? ok(cfg.cameras) : notFound();
