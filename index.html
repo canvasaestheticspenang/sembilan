@@ -649,7 +649,10 @@ const FSQ_PREPARED = new Map();
 // Unicode-normalise, strip combining accents, lowercase, split on non [a-z0-9].
 // No stopword removal.
 function normWords(str) {
-  return String(str == null ? '' : str)
+  const s0 = String(str == null ? '' : str);
+  // ASCII fast path: NFKD and accent stripping change nothing there (same output, no string copies).
+  if (/^[\x00-\x7f]*$/.test(s0)) return s0.toLowerCase().replace(/['`]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  return s0
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -712,7 +715,8 @@ function fsqPrepare(key, rows) {
     const words = normWords(r[0]);
     if (!words.length) continue;
     const locw = normWords(r[3]);
-    items.push({ row: r, name: String(r[0]), words, all: words.concat(locw), norm: words.join(' '), lat, lon });
+    const name = String(r[0]);
+    items.push({ row: r, name, words, all: words.concat(locw), norm: words.join(' '), lat, lon, id: name + '|' + lat + '|' + lon, cn: null });
   }
   FSQ_PREPARED.set(key, { rows, items });
   return items;
@@ -1223,7 +1227,36 @@ function fsqQuality(norm, qNorm) {
   if (norm === qNorm) return 3;
   if (norm.startsWith(qNorm)) return 2.5;
   if ((' ' + norm + ' ').indexOf(' ' + qNorm + ' ') >= 0) return 2;
-  return 1;
+  // The typed words start the name's words in the same order, other words allowed in between ("senai ai" ->
+  // "Senai International Airport"). Only the last typed word is meant as a prefix; see fsqOrderTier.
+  return fsqOrderTier(norm, qNorm) || 1;
+}
+// The typed words matched against the name's words (prefix match; the last typed word may be partial):
+// 1.6 in order, every earlier word a whole word of the name; 1.5 the same words in any order;
+// 1.3 in order with an earlier word only partial ("sung dua" -> "Sungai Dua"); 1.2 any order, partial; 0 no match.
+function fsqOrderTier(norm, qNorm) {
+  const nw = norm.split(' '), qw = qNorm.split(' ').filter(Boolean);
+  let j = 0, whole = true, inOrder = true;
+  for (let i = 0; i < qw.length && inOrder; i++) {
+    while (j < nw.length && !nw[j].startsWith(qw[i])) j++;
+    if (j >= nw.length) { inOrder = false; break; }
+    if (i < qw.length - 1 && nw[j] !== qw[i]) whole = false;
+    j++;
+  }
+  if (inOrder) return whole ? 1.6 : 1.3;
+  const used = new Array(nw.length).fill(false);
+  whole = true;
+  for (let i = 0; i < qw.length; i++) {
+    let found = -1;
+    for (let k = 0; k < nw.length && found < 0; k++) if (!used[k] && nw[k].startsWith(qw[i])) found = k;
+    if (found < 0) return 0;
+    if (i < qw.length - 1 && nw[found] !== qw[i]) {
+      const exact = nw.findIndex((w, k) => !used[k] && w === qw[i]);
+      if (exact >= 0) found = exact; else whole = false;
+    }
+    used[found] = true;
+  }
+  return whole ? 1.5 : 1.2;
 }
 // Every query word (or one of its aliases) must prefix-match some word of the name.
 // People type "1 utama" for "One Utama", "jln" for "jalan", "tmn" for "taman" ...
@@ -1425,7 +1458,7 @@ async function fsqFuzzyItems(qTokens, keyList, getShard) {
       for (const it of fsqPrepare(k, r)) {
         const fix = fzItemFix(it.all, qTokens);
         if (fix.dist < 0) continue;
-        const id = it.name + '|' + it.lat + '|' + it.lon;
+        const id = it.id;
         if (seenRow.has(id)) continue;
         seenRow.add(id);
         out.push({ it, dist: fix.dist, corr: fix.corr.join(' ') });
@@ -1491,6 +1524,17 @@ function fsqCatAdj(row, hit) {
   if (FSQ_BOOST.test(c)) return /hotel/i.test(c) ? 0.3 : 0.5;
   return 0;
 }
+// Sub-units of a place (its basement, a toilet, a bus stop at its gate ...) are named after the place. They rank below
+// the place itself unless the rider typed the sub-unit word too ("gurney plaza toilet" keeps its toilet).
+const FSQ_SUBUNIT = /\b(basement|floor|level|lvl|toilets?|washrooms?|restrooms?|rooftop|entrance|lobby|concierge|loading|kiosk|kios|door|waiting zone|smoking room)\b/i;
+function fsqSubUnitAdj(it, qNorm) {   // it: prepared item (its sub-unit word is cached on it)
+  if (it.su === undefined) { const m = FSQ_SUBUNIT.exec(it.norm); it.su = m ? m[0].toLowerCase() : ''; }
+  if (!it.su) return 0;
+  return qNorm.indexOf(' ' + it.su + ' ') >= 0 ? 0 : -1.0;
+}
+// A row whose own name carries every typed word ("City Square Johor Bahru" for "jb cit") ranks above a row that
+// matches only through its locality ("AEON Tebrau City" for "jb cit"). Same tier scale as fsqQuality.
+const FSQ_NAME_FULL = 0.3;
 
 
 // Category tile index (built by scripts/build_category_tiles.py): cat/<intent>/<latTile>_<lonTile>.json.
@@ -1499,6 +1543,9 @@ function fsqCatAdj(row, hit) {
 const FSQ_NAME_BONUS_KM = 3;        // a row whose name spells the query's own word counts this much nearer
 const FSQ_LM_WEAK = 1.0;            // score taken off a landmark matched only through a weak alias ("station")
 const FSQ_LM_BASE = 0.4;            // curated landmark bonus on the shard scale
+const FSQ_LM_NEAR_KM = 50;          // partial typing: landmark bonus in full within this distance of the map centre
+const FSQ_LM_FAR_KM = 300;          // and gone beyond this one (see searchPlaces)
+const FSQ_SHORT_Q = 3;              // typed letters at or below which landmark distance counts as for shard rows
 const FSQ_LM_INTENT_KM = 50;        // a landmark gets the category bonus only within this distance of the map centre
 const FSQ_LM_FAR = 1.5;             // score taken off a landmark beyond FSQ_LM_INTENT_KM: a far curated row must not outrank the rows near the rider
 const FSQ_CAMPUS_CAT = /^(hospital|university|college)$/i;   // landmarks whose wards, faculties and departments are indexed as rows of their own
@@ -1576,7 +1623,7 @@ async function fsqLoadItems(keys, getShard, out, seen) {
     try { r = await getShard(k); } catch (e) { r = null; }
     if (!Array.isArray(r) || !r.length) continue;
     for (const it of fsqPrepare(k, r)) {
-      const id = it.name + '|' + it.lat + '|' + it.lon;
+      const id = it.id;
       if (seen.has(id)) continue;
       seen.add(id);
       out.push(it);
@@ -2149,13 +2196,16 @@ async function searchPlaces(query, center, opts) {
   keyTk.forEach(tk => { const a = FSQ_ALIAS_WEAK[tk.t]; if (a) addKey(keyOf(a)); });
   const seen = new Set();
   const items = await fsqLoadItems(keys.slice(0, 5), opts.getShard, [], seen);
-  if (req.length === 1 && req[0].t.length === 3) {   // a 3-letter prefix also reads the 4-letter shards that start with it
-    const base = req[0].t;
+  // A 3-letter prefix also reads the 4-letter shards that start with it. That holds for a one-word query and for a
+  // multi-word one whose longest name word is the 3-letter prefix being typed ("jb cit" -> "City Square").
+  const longest = keyTk.length ? keyTk.reduce((a, b) => (b.t.length >= a.t.length ? b : a)) : null;   // the last of the longest
+  if (longest && longest.t.length === 3 && !/\d/.test(longest.t)) {
+    const base = longest.t;
     const ex = await Promise.all('abcdefghijklmnopqrstuvwxyz0123456789'.split('').map(async c => {
       let r; try { r = await opts.getShard(base + c); } catch (e) { r = null; }
       return Array.isArray(r) && r.length ? fsqPrepare(base + c, r) : [];
     }));
-    ex.forEach(a => a.forEach(it => { const id = it.name + '|' + it.lat + '|' + it.lon; if (!seen.has(id)) { seen.add(id); items.push(it); } }));
+    ex.forEach(a => a.forEach(it => { const id = it.id; if (!seen.has(id)) { seen.add(id); items.push(it); } }));
   }
 
   // Phrase to compare with the name, as typed and with each word swapped for its alias ("bdr utama" also as "bandar utama").
@@ -2171,17 +2221,19 @@ async function searchPlaces(query, center, opts) {
   const boosts = typeof opts.boostMany === 'function' ? opts.boostMany(query, hits) : null;
   const boostOf = new Map();
   if (boosts) hits.forEach((it, i) => boostOf.set(it, boosts[i]));
-  const hitIds = new Set(hits.map(it => it.name + '|' + it.lat + '|' + it.lon));
+  const hitIds = new Set(hits.map(it => it.id));
   let fzMerge = false;   // no strict hit is good: typo hits join on the normal scale (see below)
+  const qNormSub = ' ' + normWords(query == null ? '' : String(query)).join(' ') + ' ';
   const pushShard = (it, dist, corr) => {
     const cat = String(it.row[4] == null ? '' : it.row[4]);
     const nameI = !!P.nameRe && P.nameRe.test(it.norm);
     const hitI = P.categoryIntent ? (P.categoryIntent.test(cat) || (nameI && (!cat || FSQ_GENERIC_CAT.test(cat)))) : nameI;
     const d = hasCenter ? haversineKm(center, it) : null;
     // a typo hit is also tiered on its corrected phrase ("mcdonals" reads as "mcdonald", "penag airport" as "penang airport")
-    let tier = tierOf(fsqCanon(it.norm));
+    let tier = tierOf(it.cn || (it.cn = fsqCanon(it.norm)));
     if (dist > 0 && corr) tier = Math.max(tier, fsqQuality(fsqCanon(it.norm), fsqCanon(corr)));
-    let score = tier + fsqCatAdj(it.row, hitI) - (d == null ? 0 : bias * 2.2 * d / (d + 60));
+    const full = dist === 0 && req.length && req.every(tk => fsqTokHit(it.words, tk)) && (!P.intentIds.length || hitI || nameI) ? FSQ_NAME_FULL : 0;
+    let score = tier + fsqCatAdj(it.row, hitI) + fsqSubUnitAdj(it, qNormSub) + full - (d == null ? 0 : bias * 2.2 * d / (d + 60));
     if (P.catOnly && nameI) score += FSQ_CATONLY_NAME;   // "surau": a row named Surau ranks above a mosque that only shares the category
     if (dist === 0) {
       score += boostOf.get(it) || 0;
@@ -2205,13 +2257,16 @@ async function searchPlaces(query, center, opts) {
   fzMerge = fzOn && !goodStrict;
   if (fzOn) {
     for (const f of await fsqFuzzyItems(req.map(tk => tk.t), keys, opts.getShard)) {
-      if (f.dist === 0 && hitIds.has(f.it.name + '|' + f.it.lat + '|' + f.it.lon)) continue;
+      if (f.dist === 0 && hitIds.has(f.it.id)) continue;
       pushShard(f.it, f.dist, f.corr);
     }
   }
 
   // Curated landmarks on the same scale: an exact or prefix alias earns a bonus, distance counts less,
-  // and a match only through a weak alias is pushed down.
+  // and a match only through a weak alias is pushed down. Very short typing ("ta", "mal", "ga") completes many names,
+  // and a far landmark would beat every nearby completion on the flat bonus, so up to FSQ_SHORT_Q letters the landmark
+  // distance counts on the shard rows' scale (2.2) instead of 0.8.
+  const lmDistK = normWords(query == null ? '' : String(query)).join('').length <= FSQ_SHORT_Q ? 2.2 : 0.8;
   if (opts.landmarks && (req.length || P.catOnly)) {
     let lms = [];
     try { lms = await opts.landmarks(); } catch (e) { lms = []; }
@@ -2220,7 +2275,7 @@ async function searchPlaces(query, center, opts) {
     // The whole typed name, category words included, without locality words: "subang airport" equals that alias exactly.
     const lmNameNorm = fsqCanon(normWords(query == null ? '' : String(query)).filter(w => !FSQ_STOPWORDS.has(w) && !FSQ_LOC.has(w)).join(' '));
     for (const m of lms) {
-      let best = 0, weakOnly = false;
+      let best = 0, weakOnly = false, bestFull = false;
       if (!req.length) {   // category only: the name carries one of the forms, or the landmark's category is the intent
         if (P.categoryIntent && P.categoryIntent.test(String(m.cat || ''))) best = 1;
         if (P.nameRe && m.vs.some(v => P.nameRe.test(v.w.join(' ')))) {
@@ -2234,16 +2289,21 @@ async function searchPlaces(query, center, opts) {
       // left out of the landmark name when it lies within FSQ_LOC_KM of the map centre, but then the typed phrase must
       // sit in the name (q >= 2) or be the name itself.
       const lmClose = hasCenter && lmLoc.length > 0 && haversineKm(center, m) <= FSQ_LOC_KM;
+      const intentOk = !P.intentIds.length || (!!P.categoryIntent && P.categoryIntent.test(String(m.cat || ''))) ||
+        (!!P.nameRe && P.nameRe.test(m.norm || normWords(m.name).join(' ')));
       for (const v of req.length ? m.vs : []) {
         const strict = lmName.every(tk => fsqTokHitStrict(v.w, tk));
         if (!strict && !lmName.every(tk => fsqTokHit(v.w, tk))) continue;
         const locIn = lmLoc.every(tk => fsqTokHit(v.w, tk));
         if (!locIn && !lmClose) continue;
         let q = Math.max(...qns.map(x => fsqQuality(v.n, x)));
+        if (q < 2 && v !== m.vs[0]) q = 1;   // an alias gets no in-order credit: only the landmark's own name may be the phrase
         if (lmNameNorm && v.n === lmNameNorm) q = 3;          // the typed name is this name or alias exactly ("um", "hkl")
         if (!locIn && q < 2) continue;
-        if (strict && (!best || weakOnly || q > best)) { best = q; weakOnly = false; }
-        else if (!strict && !best) { best = q; weakOnly = true; }
+        // every typed word is in the landmark's own name or alias, and the category the rider named (if any) fits
+        const full = req.every(tk => fsqTokHit(v.w, tk)) && (!P.intentIds.length || intentOk);
+        if (strict && (!best || weakOnly || q > best)) { best = q; weakOnly = false; bestFull = full; }
+        else if (!strict && !best) { best = q; weakOnly = true; bestFull = full; }
       }
       // No exact or prefix alias, and no strict hit is good: a landmark name or alias within typo distance (typoPen).
       let typoPen = 0;   // a typo-matched landmark gets no curated bonus: it ranks on the same scale as the typo shard rows
@@ -2260,8 +2320,12 @@ async function searchPlaces(query, center, opts) {
       const d = hasCenter ? haversineKm(center, m) : null;
       // a category bonus only for landmarks in the rider's region: a "mall" typed in Johor must not lift a mall in Selangor
       const intentL = (P.categoryIntent ? P.categoryIntent.test(cat) : (!!P.nameRe && P.nameRe.test(norm))) && (d == null || d <= FSQ_LM_INTENT_KM);
-      const lmBonus = typoPen ? 0 : FSQ_LM_BASE + (best >= 2.5 ? 0.6 : 0);
-      const score = best + lmBonus + (intentL ? 0.8 : 0) - (weakOnly ? FSQ_LM_WEAK : 0) - typoPen - (d == null ? 0 : bias * 0.8 * d / (d + 300)) - (d != null && d > FSQ_LM_INTENT_KM ? FSQ_LM_FAR : 0);
+      // The curated bonus is for landmarks in the rider's region: for partial typing it fades from full at FSQ_LM_NEAR_KM
+      // to nothing at FSQ_LM_FAR_KM, so "Paradigm Mall Petaling Jaya" (300 km) does not beat "Paradigm Mall" (7 km) for a rider in Johor.
+      // A typed name that is this landmark's name or alias exactly keeps the full bonus wherever it is.
+      const near = best >= 3 || d == null ? 1 : Math.min(1, Math.max(0, (FSQ_LM_FAR_KM - d) / (FSQ_LM_FAR_KM - FSQ_LM_NEAR_KM)));
+      const lmBonus = typoPen ? 0 : near * (FSQ_LM_BASE + (best >= 2.5 ? 0.6 : 0) + (bestFull && !weakOnly ? FSQ_NAME_FULL : 0));
+      const score = best + lmBonus + (intentL ? 0.8 : 0) - (weakOnly ? FSQ_LM_WEAK : 0) - typoPen - (d == null ? 0 : bias * lmDistK * d / (d + 60)) - (d != null && d > FSQ_LM_INTENT_KM && best < 3 ? FSQ_LM_FAR : 0);
       scored.push({ lm: true, lat: m.lat, lon: m.lon, name: m.name, norm, base: m.base || norm, vn: m.vs.map(v => v.n), cat, row: null, d, score });
     }
   }
