@@ -16,7 +16,11 @@ const qTo = html.indexOf('// Prefix-quality tier');
 assert.ok(qFrom > 0 && qTo > qFrom, 'QU module and alias tables found by their markers');
 const ctxQ = {};
 vm.createContext(ctxQ);
-vm.runInContext(html.slice(qFrom, qTo) + '\n;this.QU = QU;', ctxQ);
+// typoCatSpans (in QU) calls fzDL, the edit distance defined in the typo section: load it too.
+const dFrom = html.indexOf('// Optimal-string-alignment distance');
+const dTo = html.indexOf('// Word-level distance between a typed token');
+assert.ok(dFrom > 0 && dTo > dFrom, 'fzDL found by its markers');
+vm.runInContext(html.slice(qFrom, qTo) + '\n' + html.slice(dFrom, dTo) + '\n;this.QU = QU;', ctxQ);
 const QU = ctxQ.QU;
 
 const alts = (t) => QU.tokenAlts(t);
