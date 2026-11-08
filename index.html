@@ -730,13 +730,70 @@ function fsqQuality(norm, qNorm) {
 const FSQ_ALIAS = { '1': 'one', '2': 'two', '3': 'three', '4': 'four', '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
   jln: 'jalan', jalan: 'jln', tmn: 'taman', taman: 'tmn', bdr: 'bandar', bandar: 'bdr', bkt: 'bukit', bukit: 'bkt', lrg: 'lorong', lorong: 'lrg', sri: 'seri', seri: 'sri', kg: 'kampung', kampung: 'kg' };
 Object.keys(FSQ_ALIAS).filter(k => /^\d$/.test(k)).forEach(k => { FSQ_ALIAS[FSQ_ALIAS[k]] = k; });
+// English and Malay words for the same kind of place ("station" finds "Stesen ...", "masjid" finds "Mosque").
+// Weak: a name matched only through one of these is ranked after direct name matches.
+const FSQ_ALIAS_WEAK = {};
+[['station', 'stesen'], ['police', 'polis'], ['mosque', 'masjid'], ['market', 'pasar'], ['university', 'universiti'],
+ ['school', 'sekolah'], ['college', 'kolej'], ['clinic', 'klinik'], ['pharmacy', 'farmasi'], ['bus', 'bas'],
+ ['beach', 'pantai'], ['jetty', 'jeti']].forEach(([a, b]) => { FSQ_ALIAS_WEAK[a] = b; FSQ_ALIAS_WEAK[b] = a; });
+// Chinese and Tamil place words -> Latin search words. The name index only holds Latin words,
+// so a CJK/Tamil query is rewritten to Latin here before searching. Longest term wins.
+const ZH_TERMS = [
+  ['吉隆坡', 'kuala lumpur'], ['槟城', 'penang'], ['槟岛', 'penang'], ['乔治市', 'george town'], ['威省', 'seberang perai'],
+  ['北海', 'butterworth'], ['峇六拜', 'balik pulau'], ['双威金字塔', 'sunway pyramid'], ['双威', 'sunway'], ['金字塔', 'pyramid'],
+  ['新山', 'johor bahru'], ['柔佛', 'johor'], ['雪兰莪', 'selangor'], ['莎亚南', 'shah alam'], ['八打灵再也', 'petaling jaya'],
+  ['八打灵', 'petaling'], ['布城', 'putrajaya'], ['马六甲', 'melaka'], ['怡保', 'ipoh'], ['亚庇', 'kota kinabalu'],
+  ['古晋', 'kuching'], ['沙巴', 'sabah'], ['砂拉越', 'sarawak'], ['霹雳', 'perak'], ['吉打', 'kedah'], ['亚罗士打', 'alor setar'],
+  ['玻璃市', 'perlis'], ['吉兰丹', 'kelantan'], ['登嘉楼', 'terengganu'], ['彭亨', 'pahang'], ['森美兰', 'negeri sembilan'],
+  ['加影', 'kajang'], ['芙蓉', 'seremban'], ['巴生', 'klang'], ['居銮', 'kluang'], ['纳闽', 'labuan'], ['马来西亚', 'malaysia'],
+  ['中央车站', 'sentral'], ['国际机场', 'airport'], ['机场', 'airport'], ['火车站', 'stesen'], ['车站', 'stesen'],
+  ['巴士站', 'bus'], ['巴士', 'bus'], ['地铁', 'mrt'], ['轻轨', 'lrt'], ['医院', 'hospital'], ['诊所', 'clinic'],
+  ['药房', 'pharmacy'], ['警察局', 'police'], ['派出所', 'police'], ['警局', 'police'], ['消防局', 'bomba'],
+  ['大学', 'university'], ['学院', 'college'], ['中学', 'sekolah'], ['小学', 'sekolah'], ['购物中心', 'mall'],
+  ['商场', 'mall'], ['广场', 'plaza'], ['巴刹', 'pasar'], ['菜市场', 'market'], ['市场', 'market'], ['夜市', 'night market'],
+  ['清真寺', 'masjid'], ['印度庙', 'temple'], ['兴都庙', 'temple'], ['寺庙', 'temple'], ['庙', 'temple'], ['教堂', 'church'],
+  ['酒店', 'hotel'], ['旅馆', 'hotel'], ['宾馆', 'hotel'], ['加油站', 'petrol station'], ['油站', 'petrol station'],
+  ['茶餐室', 'kopitiam'], ['咖啡店', 'kopitiam'], ['小贩中心', 'hawker'], ['公园', 'park'], ['花园', 'taman'],
+  ['路', 'jalan'], ['街', 'jalan'], ['大桥', 'bridge'], ['码头', 'jetty'], ['渡轮', 'ferry'], ['收费站', 'toll'],
+  ['邮局', 'pos'], ['银行', 'bank'], ['海滩', 'pantai'], ['沙滩', 'pantai'], ['山', 'bukit'], ['岛', 'pulau'],
+  ['麦当劳', 'mcdonald'], ['肯德基', 'kfc'], ['必胜客', 'pizza hut'], ['星巴克', 'starbucks'], ['汉堡王', 'burger king'],
+  ['家乐福', 'carrefour'], ['乐购', 'tesco'], ['永旺', 'aeon'],
+  // Tamil (basic place words)
+  ['பினாங்கு', 'penang'], ['கோலாலம்பூர்', 'kuala lumpur'], ['சிலாங்கூர்', 'selangor'], ['ஜோகூர்', 'johor'], ['மலாக்கா', 'melaka'],
+  ['ஈப்போ', 'ipoh'], ['விமான நிலையம்', 'airport'], ['ரயில் நிலையம்', 'stesen'], ['பேருந்து நிலையம்', 'bus'],
+  ['மருத்துவமனை', 'hospital'], ['காவல் நிலையம்', 'police'], ['பள்ளிவாசல்', 'masjid'], ['கோயில்', 'temple'],
+  ['சந்தை', 'market'], ['பல்கலைக்கழகம்', 'university'], ['பள்ளி', 'school'], ['வணிக வளாகம்', 'mall'],
+  ['பெட்ரோல் நிலையம்', 'petrol station'], ['கடற்கரை', 'beach'],
+].sort((a, b) => b[0].length - a[0].length);
+const NON_LATIN_RE = /[^\u0000-ɏḀ-ỿ]/;
+// Rewrites a query that contains CJK or Tamil text into Latin words. Unknown non-Latin characters
+// become spaces. Latin-only queries come back unchanged.
+function zhToLatin(q) {
+  const s = String(q == null ? '' : q);
+  if (!NON_LATIN_RE.test(s)) return s;
+  const t = s.normalize('NFC');
+  let out = '';
+  for (let i = 0; i < t.length;) {
+    const hit = ZH_TERMS.find(e => t.startsWith(e[0], i));
+    if (hit) { out += ' ' + hit[1] + ' '; i += hit[0].length; }
+    else { const ch = t[i]; out += /[\u0000-ɏ]/.test(ch) ? ch : (/['’‘`]/.test(ch) ? '' : ' '); i++; }
+  }
+  return out;
+}
 function fsqTokMatch(w, t) {
   if (/^\d$/.test(t)) return w === t || w === FSQ_ALIAS[t];       // a lone digit must be a whole word
   if (w.startsWith(t)) return true;
   const a = FSQ_ALIAS[t];
   return !!a && (w === a || (a.length > 3 && w.startsWith(a)));
 }
+function fsqWeakTokMatch(w, t) {
+  const a = FSQ_ALIAS_WEAK[t];
+  return !!a && (w === a || (a.length > 3 && w.startsWith(a)));
+}
 function fsqMatches(words, qTokens) {
+  return qTokens.every(t => words.some(w => fsqTokMatch(w, t) || fsqWeakTokMatch(w, t)));
+}
+function fsqStrictMatches(words, qTokens) {
   return qTokens.every(t => words.some(w => fsqTokMatch(w, t)));
 }
 // Typo tolerance. Used only when strict matching finds fewer than 3 places (see searchPlaces).
@@ -1370,12 +1427,20 @@ async function searchPlaces(query, center, opts) {
 
   const keyList = [];
   const seenK = new Set();
-  sigWords(String(query)).filter(t => t.length >= 2 && !/^\d+$/.test(t)).sort((a, b) => b.length - a.length).forEach(t => {
+  const qWords = sigWords(String(query)).filter(t => t.length >= 2 && !/^\d+$/.test(t)).sort((a, b) => b.length - a.length);
+  qWords.forEach(t => {
     const k = keyOf(t);
     if (!seenK.has(k)) { seenK.add(k); keyList.push(k); }
   });
+  const aliasKeys = [];   // shard of the alias word too ("station" also reads the "stesen" shard)
+  qWords.forEach(t => {
+    const a = FSQ_ALIAS[t] || FSQ_ALIAS_WEAK[t];
+    if (!a || /^\d$/.test(t)) return;
+    const k = keyOf(a);
+    if (!seenK.has(k)) { seenK.add(k); aliasKeys.push(k); }
+  });
   let key = null, rows = null, items = [];
-  for (const k of keyList.slice(0, 3)) {
+  for (const k of keyList.slice(0, 3).concat(aliasKeys.slice(0, 2))) {
     let r;
     try { r = await opts.getShard(k); } catch (e) { r = null; }
     if (!Array.isArray(r) || !r.length) continue;
@@ -1456,15 +1521,16 @@ function getPlacesShard(k){if(!placesShards.has(k))placesShards.set(k,getJSON(`$
 let lmP=null;
 function getLandmarks(){if(!lmP)lmP=getJSON(PLACES_BASE.replace(/places\/$/,'')+'landmarks.json',{},8000).then(a=>a.map(r=>{const vs=[r[0],...(r[4]||[])].map(v=>{const w=normWords(v);return{w,n:fsqCanon(w.join(' '))}}).filter(v=>v.w.length);return{name:r[0],lat:r[1],lon:r[2],cat:r[3],vs}})).catch(()=>[]);return lmP}
 function landmarkRank(lms,query,c){
-  let qt=normWords(query);if(qt.length>1)qt=qt.flatMap(t=>({kl:['kuala','lumpur'],pj:['petaling','jaya'],jb:['johor','bahru']})[t]||[t]);
+  let qt=normWords(zhToLatin(query));if(qt.length>1)qt=qt.flatMap(t=>({kl:['kuala','lumpur'],pj:['petaling','jaya'],jb:['johor','bahru']})[t]||[t]);
   qt=qt.filter(t=>t.length>=2||/^\d$/.test(t));if(!qt.length)return[];const qn=fsqCanon(qt.join(' '));const out=[];
-  for(const m of lms){let best=0;for(const v of m.vs){let sc=0;if(v.n===qn)sc=4;else if(v.n.startsWith(qn))sc=3;else if(fsqMatches(v.w,qt))sc=2.2;if(sc>best)best=sc}
-    if(!best)continue;const d=hav(c.lat,c.lng,m.lat,m.lon)/1000;out.push({lm:true,lat:m.lat,lon:m.lon,name:m.name,sub:m.cat,score:best-0.8*d/(d+300)})}
+  for(const m of lms){let best=0,weak=false;for(const v of m.vs){let sc=0,wk=false;if(v.n===qn)sc=4;else if(v.n.startsWith(qn))sc=3;else if(fsqStrictMatches(v.w,qt))sc=2.2;else if(fsqMatches(v.w,qt)){sc=2.2;wk=true}if(sc>best){best=sc;weak=wk}}
+    if(!best)continue;const d=hav(c.lat,c.lng,m.lat,m.lon)/1000;out.push({lm:true,lat:m.lat,lon:m.lon,name:m.name,sub:m.cat,weak,score:best-0.8*d/(d+300)})}
   return out.sort((a,b)=>b.score-a.score).slice(0,6)}
-async function fsqSearch(q){const c=map.getCenter();const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
+async function fsqSearch(q){const qz=zhToLatin(q);if(!normWords(qz).length)return[];const c=map.getCenter();const r=await searchPlaces(qz,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
   const shard=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · ')}));
-  let lm=[];try{lm=landmarkRank(await getLandmarks(),q,c)}catch(e){}
-  return [...lm,...shard.filter(p=>!lm.some(m=>hav(m.lat,m.lon,p.lat,p.lon)<250&&normWords(m.name).join(' ')===normWords(p.name).join(' ')))]}
+  let lm=[];try{lm=landmarkRank(await getLandmarks(),qz,c)}catch(e){}
+  const strongLm=lm.filter(m=>!m.weak),weakLm=lm.filter(m=>m.weak);
+  return [...strongLm,...shard.filter(p=>!lm.some(m=>hav(m.lat,m.lon,p.lat,p.lon)<250&&normWords(m.name).join(' ')===normWords(p.name).join(' '))),...weakLm]}
 // While navigating: wider pool (80), no distance bias, ranked by distance to the rest of the route (arRank). Same result shape as fsqSearch.
 function riderAlongNow(){const n=st.nav;if(!n||!n.r||!Array.isArray(n.r.cum))return 0;return n.r.cum[n.last]||0}
 async function fsqSearchAlong(q,route,riderAlongM){const c=map.getCenter();
