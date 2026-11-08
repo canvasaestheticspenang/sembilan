@@ -718,14 +718,426 @@ function fsqPrepare(key, rows) {
   return items;
 }
 
-// Prefix-quality tier: 3 exact name, 2 name starts with query, 1 word-prefix match.
+/*
+ * Sembilan query understanding. Plain ES2020, no imports, browser + node.
+ * Global namespace: QU. The alias tables (QU_ALIASES, just below) are inlined in this file;
+ * scripts/build_category_tiles.py reads them from index.html.
+ *
+ *   QU.parseQuery(q)            -> { raw, text, tokens, nearMe, categoryIntent, intentIds,
+ *                                    intentLabel, catOnly, indexIds, matches }
+ *   QU.tokenAlts / QU.queryMatches(nameWords, tokens) -> boolean  (alias-aware, all tokens)
+ *   QU.planFor(parsed)          -> { mode: 'category'|'name'|'none', files?, shardKeys? }
+ *   QU.categoryBoost(row, re)   -> 0.8 when the shard row's category matches, else 0
+ *   QU.rankNearby(rows, re, center, opts) -> nearest rows of a category (search result shape)
+ *   QU.expandCatIndex(file)     -> rows of a cat/<id>.json file in shard row shape
+ *   QU.intentRegexes()          -> { id: { label, re, cats } } for every concept (used by the builder)
+ *   QU.setAliases(obj)          -> load tables (aliases.json shape)
+ */
+var QU = (function () {
+  'use strict';
+
+  var A = null;          // raw aliases object
+  var K = null;          // compiled tables, rebuilt by setAliases
+  var reMemo = new Map();
+
+  function fold(s) {
+    // Latin: lowercase, strip accents; keep letters, digits and combining marks (Tamil vowel signs).
+    return String(s == null ? '' : s)
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
+      .trim();
+  }
+
+  function isCjkOrTamil(s) {
+    return /[⺀-⿿　-〿぀-ヿ㐀-䶿一-鿿豈-﫿஀-௿]/.test(s);
+  }
+
+  function esc(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function catPatternToRe(s) {
+    if (s.charAt(0) === '*') return '.*' + esc(s.slice(1));
+    if (s.charAt(s.length - 1) === '*') return esc(s.slice(0, -1)) + '.*';
+    return esc(s);
+  }
+
+  // Regex over real category strings, case-insensitive, anchored.
+  function buildRe(cats) {
+    if (!cats || !cats.length) return null;
+    var uniq = [];
+    cats.forEach(function (c) { if (uniq.indexOf(c) < 0) uniq.push(c); });
+    var key = uniq.join('\u0001');
+    if (reMemo.has(key)) return reMemo.get(key);
+    var re = new RegExp('^(?:' + uniq.map(catPatternToRe).join('|') + ')$', 'i');
+    reMemo.set(key, re);
+    return re;
+  }
+
+  function compile() {
+    if (K) return K;
+    var a = A || {};
+    K = {
+      forms: [],          // span candidates: {f, cjk, kind:'near'|'cat'|'brand', id, label, cats, canon, order}
+      fillers: Object.create(null),
+      groups: Object.create(null),
+      concepts: {},       // id -> { id, label, cats, re }
+      brands: {}          // id -> { id, canon, cats, re }
+    };
+    var order = 0;
+    (a.nearMe || []).forEach(function (f) {
+      var n = fold(f);
+      if (n) K.forms.push({ f: n, cjk: isCjkOrTamil(n), kind: 'near', id: 'near', order: order++ });
+    });
+    (a.categories || []).forEach(function (c) {
+      var cats = c.cats || [];
+      K.concepts[c.id] = { id: c.id, label: c.label || c.id, cats: cats, re: buildRe(cats), forms: (c.forms || []).map(fold).filter(function (f) { return f.length >= 3 && !isCjkOrTamil(f); }) };
+      (c.forms || []).forEach(function (f) {
+        var n = fold(f);
+        if (n) K.forms.push({ f: n, cjk: isCjkOrTamil(n), kind: 'cat', id: c.id, order: order++ });
+      });
+    });
+    (a.brands || []).forEach(function (b) {
+      var canon = fold(b.canon || b.id);
+      K.brands[b.id] = { id: b.id, canon: canon, cats: b.cats || [], re: buildRe(b.cats || []), forms: [] };
+      (b.forms || []).forEach(function (f) {
+        var n = fold(f);
+        if (n) K.forms.push({ f: n, cjk: isCjkOrTamil(n), kind: 'brand', id: b.id, order: order++ });
+      });
+    });
+    (a.fillers || []).forEach(function (f) { K.fillers[fold(f)] = true; });
+    (a.tokenGroups || []).forEach(function (g) {
+      var m = g.map(fold).filter(Boolean);
+      m.forEach(function (w) {
+        K.groups[w] = K.groups[w] || [];
+        m.forEach(function (o) {
+          if (o !== w && K.groups[w].indexOf(o) < 0) K.groups[w].push(o);
+        });
+      });
+    });
+    // Longest forms first so "klinik gigi" beats "klinik".
+    K.forms.sort(function (x, y) { return (y.f.length - x.f.length) || (x.order - y.order); });
+    return K;
+  }
+
+  function setAliases(obj) {
+    A = obj || null;
+    K = null;
+  }
+
+  // Leftmost-longest, non-overlapping spans of forms in the padded folded query S.
+  function findSpans(S, forms) {
+    var cand = [];
+    forms.forEach(function (e) {
+      var pat = e.cjk ? e.f : ' ' + e.f + ' ';
+      var from = 0, pos;
+      while ((pos = S.indexOf(pat, from)) !== -1) {
+        var start = e.cjk ? pos : pos + 1;
+        cand.push({ start: start, end: start + e.f.length, e: e });
+        from = pos + 1;
+      }
+    });
+    cand.sort(function (x, y) {
+      return ((y.end - y.start) - (x.end - x.start)) || (x.start - y.start) || (x.e.order - y.e.order);
+    });
+    var acc = [];
+    cand.forEach(function (c) {
+      for (var i = 0; i < acc.length; i++) {
+        if (c.start < acc[i].end && acc[i].start < c.end) return;
+      }
+      acc.push(c);
+    });
+    acc.sort(function (x, y) { return x.start - y.start; });
+    return acc;
+  }
+
+  function splitLatin(piece) {
+    return (piece.match(/[a-z]+|[0-9]+/g) || []);
+  }
+
+  function tokenAlts(t) {
+    var K2 = compile();
+    var alts = [t];
+    (K2.groups[t] || []).forEach(function (o) { if (alts.indexOf(o) < 0) alts.push(o); });
+    return alts;
+  }
+
+  // Name regex for a set of concepts: a folded name that contains one of their forms as whole words.
+  function nameRegexFor(forms) {
+    var uniq = [];
+    forms.forEach(function (f) { if (uniq.indexOf(f) < 0) uniq.push(f); });
+    if (!uniq.length) return null;
+    var key = 'N\u0001' + uniq.join('\u0001');
+    if (reMemo.has(key)) return reMemo.get(key);
+    var re = new RegExp('(?:^| )(?:' + uniq.map(esc).join('|') + ')(?= |$)');
+    reMemo.set(key, re);
+    return re;
+  }
+
+  function parseQuery(q) {
+    var K2 = compile();
+    var raw = q == null ? '' : String(q);
+    var S = ' ' + fold(raw) + ' ';
+    var spans = findSpans(S, K2.forms);
+
+    var nearMe = false;
+    var catIds = [];
+    var brandIds = [];
+    var matches = [];
+    var rest = '';      // text with category words removed (what the name must match)
+    var phrase = '';    // full text, category words kept in place (what the name should contain)
+    var cur = 0;
+    spans.forEach(function (s) {
+      var gap = S.slice(cur, s.start);
+      rest += gap + ' ';
+      phrase += gap + ' ';
+      var e = s.e;
+      matches.push({ kind: e.kind, form: e.f, id: e.id });
+      if (e.kind === 'near') {
+        nearMe = true;
+      } else if (e.kind === 'cat') {
+        if (catIds.indexOf(e.id) < 0) catIds.push(e.id);
+        phrase += ' ' + e.f + ' ';
+      } else if (e.kind === 'brand') {
+        var b = K2.brands[e.id];
+        if (brandIds.indexOf(e.id) < 0) brandIds.push(e.id);
+        rest += ' ' + b.canon + ' ';   // brands keep their name as text
+        phrase += ' ' + b.canon + ' ';
+      }
+      cur = s.end;
+    });
+    rest += S.slice(cur);
+    phrase += S.slice(cur);
+
+    var catsAll = [];
+    var formsAll = [];
+    catIds.forEach(function (id) {
+      K2.concepts[id].cats.forEach(function (c) { if (catsAll.indexOf(c) < 0) catsAll.push(c); });
+      K2.concepts[id].forms.forEach(function (f) { if (formsAll.indexOf(f) < 0) formsAll.push(f); });
+    });
+    brandIds.forEach(function (id) { K2.brands[id].cats.forEach(function (c) { if (catsAll.indexOf(c) < 0) catsAll.push(c); }); });
+    var categoryIntent = catsAll.length ? buildRe(catsAll) : null;
+    var nameRe = nameRegexFor(formsAll);
+    var hasIntent = catIds.length > 0 || brandIds.length > 0;
+
+    function wordsOf(text, keepFillers) {
+      var out = [];
+      text.split(' ').forEach(function (p) {
+        if (!p) return;
+        if (hasIntent && !keepFillers && K2.fillers[p]) return;
+        splitLatin(p).forEach(function (w) {
+          if (w.length >= 2 || /^\d$/.test(w)) out.push(w);
+        });
+      });
+      return out;
+    }
+    var words = wordsOf(rest, false);
+    var tokens = words.map(function (w) {
+      return { t: w, alts: tokenAlts(w) };
+    });
+    var phraseWords = wordsOf(phrase, false);
+
+    var labelId = catIds.length ? catIds[0] : null;
+    var intentLabel = labelId ? K2.concepts[labelId].label : (brandIds.length ? K2.brands[brandIds[0]].canon : null);
+
+    return {
+      raw: raw,
+      text: words.join(' '),
+      phrase: phraseWords.join(' '),
+      tokens: tokens,
+      nearMe: nearMe,
+      categoryIntent: categoryIntent,
+      nameRe: nameRe,
+      formWords: formsAll.filter(function (f) { return f.indexOf(' ') < 0 && f.length >= 3; }).slice(0, 3),
+      intentIds: catIds.concat(brandIds),
+      intentLabel: intentLabel,
+      catOnly: hasIntent && tokens.length === 0,
+      indexIds: catIds.filter(function (id) { return !!K2.concepts[id].re; }),
+      matches: matches
+    };
+  }
+
+  // Word-level prefix match, digits exact, single letters exact.
+  function wordMatch(nameWord, qw) {
+    if (/^\d+$/.test(qw)) return nameWord === qw;
+    if (qw.length < 2) return nameWord === qw;
+    return nameWord.indexOf(qw) === 0;
+  }
+
+  function altMatch(nameWords, alt) {
+    var aw = alt.split(' ');
+    for (var i = 0; i < aw.length; i++) {
+      var w = aw[i];
+      if (!w) continue;
+      var ok = false;
+      for (var j = 0; j < nameWords.length; j++) {
+        if (wordMatch(nameWords[j], w)) { ok = true; break; }
+      }
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  // nameWords: normWords(name) from index.html (lowercase [a-z0-9] words).
+  function queryMatches(nameWords, tokens) {
+    for (var i = 0; i < tokens.length; i++) {
+      var alts = tokens[i].alts;
+      var ok = false;
+      for (var j = 0; j < alts.length; j++) {
+        if (altMatch(nameWords, alts[j])) { ok = true; break; }
+      }
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  // Shard keys (first 4 chars of a word, as in keyOf) to read for a name query.
+  // Includes alias spellings, so "jalan" also reads the "jln" shard.
+  function shardKeysFor(tokens, max) {
+    var keys = [];
+    var sorted = tokens.slice().sort(function (x, y) { return y.t.length - x.t.length; });
+    sorted.forEach(function (tk) {
+      tk.alts.forEach(function (alt) {
+        alt.split(' ').forEach(function (w) {
+          if (w.length < 2 || /^\d+$/.test(w)) return;
+          var k = w.length < 4 ? w : w.slice(0, 4);
+          if (keys.indexOf(k) < 0) keys.push(k);
+        });
+      });
+    });
+    return keys.slice(0, max || 4);
+  }
+
+  function planFor(parsed) {
+    if (parsed.catOnly) {
+      return { mode: 'category', files: parsed.indexIds.map(function (id) { return 'cat/' + id + '.json'; }) };
+    }
+    if (parsed.tokens.length) {
+      return { mode: 'name', shardKeys: shardKeysFor(parsed.tokens, 4) };
+    }
+    return { mode: 'none' };
+  }
+
+  function categoryBoost(row, re) {
+    if (!re || !row) return 0;
+    return re.test(String(row[4] == null ? '' : row[4])) ? 0.8 : 0;
+  }
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    var R = 6371, rad = function (d) { return d * Math.PI / 180; };
+    var dLat = rad(lat2 - lat1), dLon = rad(lon2 - lon1);
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  // Nearest rows of a category. rows: shard-shape arrays [name, lat, lon, locality, cat].
+  // re: category RegExp (or null to trust the rows). opts: limit (15), maxKm (Infinity), dedupeM (150).
+  // Returns search-result shape {name, lat, lon, sub, cat, src:'fsq', dk}.
+  function rankNearby(rows, re, center, opts) {
+    opts = opts || {};
+    var limit = opts.limit > 0 ? opts.limit : 15;
+    var maxKm = Number.isFinite(opts.maxKm) ? opts.maxKm : Infinity;
+    var dedupeM = Number.isFinite(opts.dedupeM) ? opts.dedupeM : 150;
+    if (!center || !Number.isFinite(center.lat) || !Number.isFinite(center.lon) || !Array.isArray(rows)) return [];
+    var cand = [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!Array.isArray(r)) continue;
+      if (re && !re.test(String(r[4] == null ? '' : r[4]))) continue;
+      var lat = Number(r[1]), lon = Number(r[2]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      var d = haversineKm(center.lat, center.lon, lat, lon);
+      if (d > maxKm) continue;
+      cand.push({ r: r, d: d, lat: lat, lon: lon });
+    }
+    cand.sort(function (x, y) {
+      if (x.d !== y.d) return x.d - y.d;
+      var nx = String(x.r[0]), ny = String(y.r[0]);
+      return nx < ny ? -1 : nx > ny ? 1 : 0;
+    });
+    var out = [];
+    var byName = new Map();
+    for (var k = 0; k < cand.length && out.length < limit; k++) {
+      var c = cand[k];
+      var nk = fold(c.r[0]);
+      var group = byName.get(nk) || [];
+      var dup = group.some(function (g) { return haversineKm(g.lat, g.lon, c.lat, c.lon) * 1000 < dedupeM; });
+      if (dup) continue;
+      group.push(c);
+      byName.set(nk, group);
+      out.push({
+        name: String(c.r[0]),
+        lat: c.lat,
+        lon: c.lon,
+        sub: c.r[3] != null ? c.r[3] : null,
+        cat: c.r[4] != null ? c.r[4] : null,
+        src: 'fsq',
+        dk: Math.round(c.d * 1000)
+      });
+    }
+    return out;
+  }
+
+  // cat/<id>.json shape: { id, label, cats: [category strings], rows: [[name, lat, lon, locality, catIndex]] }
+  function expandCatIndex(file) {
+    if (!file || !Array.isArray(file.rows)) return [];
+    var cats = file.cats || [];
+    return file.rows.map(function (r) { return [r[0], r[1], r[2], r[3], cats[r[4]]]; });
+  }
+
+  // Tile keys of the 3x3 block around center for the tiled cat/<id>/<key>.json index.
+  // tileDeg must equal the builder argument (0.2 is the shipped default; see report).
+  function categoryTileKeys(center, tileDeg) {
+    var t = Number(tileDeg) > 0 ? Number(tileDeg) : 0.2;
+    if (!center || !Number.isFinite(center.lat) || !Number.isFinite(center.lon)) return [];
+    var la = Math.floor(center.lat / t), lo = Math.floor(center.lon / t);
+    var keys = [];
+    for (var da = -1; da <= 1; da++) for (var db = -1; db <= 1; db++) keys.push((la + da) + "_" + (lo + db));
+    return keys;
+  }
+
+  function intentRegexes() {
+    var K2 = compile();
+    var out = {};
+    Object.keys(K2.concepts).forEach(function (id) {
+      var c = K2.concepts[id];
+      if (c.re) out[id] = { label: c.label, re: c.re, cats: c.cats };
+    });
+    return out;
+  }
+
+  var QU = {
+    setAliases: setAliases,
+    parseQuery: parseQuery,
+    tokenAlts: tokenAlts,
+    queryMatches: queryMatches,
+    shardKeysFor: shardKeysFor,
+    planFor: planFor,
+    categoryBoost: categoryBoost,
+    rankNearby: rankNearby,
+    expandCatIndex: expandCatIndex,
+    intentRegexes: intentRegexes,
+    categoryTileKeys: categoryTileKeys,
+    fold: fold
+  };
+  return QU;
+})();
+
+
+const QU_ALIASES = {"version":1,"_about":"Query-understanding tables for Sembilan search. Forms are folded at load time (lowercase, accents stripped, punctuation to spaces, so \"Doctor's\" becomes \"doctor s\"). Category cats must be real Foursquare category strings (see census/categories.json); '*X' = ends with X, 'X*' = starts with X. Chinese (Simplified and Traditional) and Tamil forms are matched as substrings.","nearMe":["near me","nearby","near by","nearest","closest","dekat sini","dekat saya","dekat aku","berhampiran","berdekatan","terdekat","sekitar sini","sekitar saya","di sekitar","kat sini","附近","附近的","最近的","近的","附近有","அருகில்","அருகே","எனக்கு அருகில்"],"fillers":["di","ke","dari","yang","the","at","in","on","pada","kat","untuk","a","an","of","near"],"tokenGroups":[["jln","jalan","jl"],["tmn","taman"],["bdr","bandar"],["bkt","bukit"],["kg","kampung","kpg"],["lrg","lorong"],["sri","seri"],["kl","kuala lumpur"],["pj","petaling jaya"],["jb","johor bahru"],["bm","bukit mertajam"],["pg","penang","pulau pinang","pinang"],["sg","sungai"],["bt","batu"],["stn","stesen"],["sek","sekolah"],["sk","sekolah kebangsaan"],["smk","sekolah menengah kebangsaan"],["sjk","sekolah jenis kebangsaan"],["sdn","sendirian"],["bhd","berhad"],["hosp","hospital","hospitel"],["rs","rumah sakit"],["klinik","clinic"],["masjid","mosque","masjid jamek"],["surau","musolla","musalla","musholla"],["temple","kuil","kovil","koil","tokong"],["gereja","church"],["pasar","market"],["kedai","shop","store"],["restoran","restaurant","restauran"],["kedai makan","restaurant"],["kopitiam","kopi tiam","coffee shop"],["kopi","coffee"],["teh","tea"],["ayam","chicken"],["ikan","fish"],["nasi","rice"],["mee","noodle","noodles"],["goreng","fried"],["bakar","grill","grilled"],["sekolah","school"],["universiti","university"],["kolej","college"],["pusat","centre","center","ctr"],["kompleks","komplek","complex"],["sentral","central"],["seksyen","section","sec","ss"],["lebuhraya","lebuh raya","highway","hwy"],["persiaran","psn"],["ttdi","tun dr ismail"],["uitm","universiti teknologi mara"],["ukm","universiti kebangsaan malaysia"],["usm","universiti sains malaysia"],["upm","universiti putra malaysia"],["um","universiti malaya"],["utm","universiti teknologi malaysia"],["ktm","keretapi tanah melayu"],["lrt","light rail"],["mrt","mass rapid transit"],["melaka","malacca"],["cina","chinese"],["melayu","malay"],["india","indian"],["dr","doktor","doctor"],["hj","haji"],["hjh","hajjah"],["1","one"],["2","two"],["3","three"],["4","four"],["5","five"],["6","six"],["7","seven"],["8","eight"],["9","nine"],["seafood","makanan laut"],["burger","hamburger"],["pizza","pizzeria"],["dessert","pencuci mulut"],["kk","kota kinabalu"]],"categories":[{"id":"fuel","label":"Fuel Station","forms":["stesen minyak","pam minyak","stesen petrol","pam petrol","kedai minyak","petrol station","petrol","gas station","gas","fuel station","fuel","ron95","ron 95","加油站","油站","பெட்ரோல் நிலையம்","பெட்ரோல்"],"cats":["Fuel Station"]},{"id":"hospital","label":"Hospital","forms":["hospital","hospitel","hosp","rumah sakit","医院","醫院","வைத்தியசாலை","மருத்துவமனை"],"cats":["Hospital","Children's Hospital"]},{"id":"emergency","label":"Emergency Room","forms":["emergency room","emergency","wad kecemasan","kecemasan","unit kecemasan","er","急诊","急診","急诊室","急診室"],"cats":["Emergency Room","Emergency Service"]},{"id":"clinic","label":"Doctor's Office","forms":["klinik","clinic","klinik swasta","klinik kesihatan","health clinic","medical clinic","诊所","診所","கிளினிக்"],"cats":["Doctor's Office","Medical Center","Healthcare Clinic","Dentist","Family Medicine Doctor","Internal Medicine Doctor","Maternity Clinic","Women's Health Clinic","Physical Therapy Clinic","Mental Health Clinic","Sports Medicine Clinic"]},{"id":"dentist","label":"Dentist","forms":["klinik gigi","doktor gigi","klinik pergigian","dentist","dental","dental clinic","pergigian","牙医","牙醫","牙科","பல் மருத்துவர்"],"cats":["Dentist"]},{"id":"doctor","label":"Doctor's Office","forms":["doktor","doktor am","doctor","医生","醫生","மருத்துவர்"],"cats":["Doctor's Office","Family Medicine Doctor","Internal Medicine Doctor","Ear, Nose and Throat Doctor","Gastroenterologist"]},{"id":"pharmacy","label":"Pharmacy","forms":["farmasi","pharmacy","drugstore","kedai ubat","kedai farmasi","ubat","apotek","apotik","药房","藥房","药店","藥店","மருந்தகம்"],"cats":["Pharmacy"]},{"id":"mosque","label":"Mosque","forms":["masjid","mosque","清真寺","回教堂","மசூதி","பள்ளிவாசல்"],"cats":["Mosque"]},{"id":"surau","label":"Prayer Room","forms":["surau","musolla","musalla","musholla","prayer room","prayer hall","bilik solat","bilik sembahyang","祈祷室","祈禱室"],"cats":["Mosque","Prayer Room"]},{"id":"hindu_temple","label":"Hindu Temple","forms":["kuil","kovil","koil","hindu temple","kuil hindu","兴都庙","興都廟","印度庙","印度廟","கோவில்","கோயில்","ஆலயம்"],"cats":["Hindu Temple","Temple"]},{"id":"chinese_temple","label":"Buddhist Temple","forms":["tokong","tokong cina","chinese temple","buddhist temple","vihara","tokong buddha","寺庙","寺廟","佛寺","佛庙","佛廟","庙","廟"],"cats":["Buddhist Temple","Temple","Confucian Temple"]},{"id":"church","label":"Church","forms":["gereja","church","chapel","kapel","教堂","தேவாலயம்"],"cats":["Church"]},{"id":"police","label":"Police Station","forms":["balai polis","ibu pejabat polis","ipd","polis","police","police station","警察局","警局","警察","காவல் நிலையம்"],"cats":["Police Station"]},{"id":"fire","label":"Fire Station","forms":["balai bomba","bomba","fire station","fire department","消防局","消防站","தீயணைப்பு நிலையம்"],"cats":["Fire Station"]},{"id":"market","label":"Market","forms":["pasar","market","巴刹","巴剎","市场","市場","பஜார்","சந்தை"],"cats":["Market","Fish Market","Farmers Market","Flea Market","Night Market","Marketplace"]},{"id":"night_market","label":"Night Market","forms":["pasar malam","night market","夜市","夜巿"],"cats":["Night Market"]},{"id":"wet_market","label":"Fish Market","forms":["pasar basah","pasar ikan","wet market","fish market","菜市场","菜市場","菜市"],"cats":["Fish Market","Market"]},{"id":"farmers_market","label":"Farmers Market","forms":["pasar tani","farmers market","farmer s market"],"cats":["Farmers Market"]},{"id":"restaurant","label":"Restaurant","forms":["restoran","restaurant","restauran","kedai makan","makan","餐厅","餐廳","饭店","飯店","食肆","உணவகம்"],"cats":["*Restaurant","Food Court","Food Stand","Diner","Bistro","Street Food Gathering"]},{"id":"mamak","label":"Mamak Restaurant","forms":["mamak","kedai mamak","mamak restaurant"],"cats":["Mamak Restaurant","Indian Restaurant"]},{"id":"kopitiam","label":"Coffee Shop","forms":["kopitiam","kopi tiam","kedai kopi","kedai kopi cina","coffee shop","coffeeshop","咖啡店"],"cats":["Coffee Shop","Chinese Breakfast Restaurant","Breakfast Spot"]},{"id":"cafe","label":"Café","forms":["cafe","café","kafe","kedai kafe","coffee","coffee house","咖啡馆","咖啡館"],"cats":["Café","Cafe, Coffee, and Tea House","Coffee Roaster","Coffee Shop"]},{"id":"stall","label":"Food Stand","forms":["warung","gerai","food stall","food stand","stall","小贩","小販","档口","檔口"],"cats":["Food Stand","Malay Restaurant","Street Food Gathering"]},{"id":"hawker","label":"Food Court","forms":["hawker","hawker centre","hawker center","food court","food centre","food center","kompleks makanan","小贩中心","小販中心","美食广场","美食廣場"],"cats":["Food Court","Street Food Gathering"]},{"id":"bank","label":"Bank","forms":["bank","银行","銀行","வங்கி"],"cats":["Bank","Credit Union","Banking and Finance"]},{"id":"atm","label":"ATM","forms":["atm","mesin atm","自动提款机","自動提款機","提款机","提款機"],"cats":["ATM"]},{"id":"convenience","label":"Convenience Store","forms":["kedai runcit","kedai serbaneka","convenience store","convenience","sundry shop","便利店","便利商店","小超市"],"cats":["Convenience Store","Grocery Store"]},{"id":"supermarket","label":"Supermarket","forms":["pasaraya","supermarket","hypermarket","超市","超级市场","超級市場","பேரங்காடி"],"cats":["Supermarket","Grocery Store"]},{"id":"laundry","label":"Laundry Service","forms":["dobi","kedai dobi","laundry","laundromat","dry clean","dry cleaner","dry cleaning","洗衣","洗衣店","干洗","乾洗","சலவை"],"cats":["Laundry Service","Laundromat","Dry Cleaner"]},{"id":"car_wash","label":"Car Wash and Detail","forms":["cuci kereta","pencuci kereta","car wash","carwash","wash kereta","洗车","洗車"],"cats":["Car Wash and Detail"]},{"id":"car_repair","label":"Automotive Repair Shop","forms":["bengkel","bengkel kereta","workshop","car workshop","auto repair","car repair","repair kereta","修车","修車","汽车维修","汽車維修","tayar","tyre","tire","tyre shop","tire shop","kedai tayar","tayar kereta"],"cats":["Automotive Repair Shop","Automotive Service","Car Parts and Accessories","Tire Repair Shop"]},{"id":"motorcycle","label":"Motorcycle Dealership","forms":["bengkel motor","motorcycle repair","motor workshop","motorcycle dealership","motosikal","motor dealer","摩托车店","摩托車店"],"cats":["Motorcycle Dealership","Motorcycle Repair Shop"]},{"id":"car_dealer","label":"Car Dealership","forms":["showroom kereta","car dealership","dealer kereta","car showroom"],"cats":["Car Dealership"]},{"id":"ev_charger","label":"Electric Vehicle Charging Station","forms":["cas kereta elektrik","ev charger","ev charging","charging station","cas ev","充电站","充電站"],"cats":["Electric Vehicle Charging Station"]},{"id":"toll","label":"Toll Plaza","forms":["plaza tol","toll","tol","toll plaza","toll booth","收费站","收費站"],"cats":["Toll Plaza","Toll Booth"]},{"id":"hair","label":"Hair Salon","forms":["gunting rambut","kedai gunting","kedai gunting rambut","salon","hair salon","hair","barber","barbershop","barber shop","kedai rambut","理发","理髮","理发店","理髮店","美发","美髮","发廊","髮廊","சலூன்"],"cats":["Hair Salon","Barbershop"]},{"id":"gym","label":"Gym","forms":["gym","gim","fitness","fitness centre","fitness center","pusat kecergasan","健身房","健身中心","健身","ஜிம்"],"cats":["Gym","Gym and Studio","Boxing Gym","Climbing Gym","Outdoor Gym"]},{"id":"spa","label":"Spa","forms":["spa","urut","massage","refleksologi","reflexology","按摩","按摩院","按摩店"],"cats":["Spa","Massage Clinic","Bath House"]},{"id":"bakery","label":"Bakery","forms":["bakery","bakeri","kedai roti","kedai kek","面包店","麵包店","饼店","餅店"],"cats":["Bakery"]},{"id":"hotel","label":"Hotel","forms":["hotel","motel","hostel","penginapan","酒店","旅馆","旅館","宾馆","賓館"],"cats":["Hotel","Motel","Hostel","Lodging","Bed and Breakfast","Boarding House"]},{"id":"mall","label":"Shopping Mall","forms":["pusat membeli belah","pusat beli belah","shopping mall","shopping centre","shopping center","mall","购物中心","購物中心","商场","商場"],"cats":["Shopping Mall","Outlet Mall"]},{"id":"school","label":"High School","forms":["sekolah","school","学校","學校","பள்ளி"],"cats":["High School","Elementary School","Middle School","Primary and Secondary School","Private School","Religious School","Nursery School","Preschool"]},{"id":"primary_school","label":"Elementary School","forms":["sekolah rendah","sekolah kebangsaan","sekolah jenis kebangsaan","sk","sjk","primary school","elementary school","小学","小學"],"cats":["Elementary School","Primary and Secondary School"]},{"id":"secondary_school","label":"High School","forms":["sekolah menengah","smk","sekolah menengah kebangsaan","secondary school","high school","中学","中學"],"cats":["High School","Middle School","Primary and Secondary School"]},{"id":"religious_school","label":"Religious School","forms":["sekolah agama","madrasah","sekolah pondok","pondok"],"cats":["Religious School"]},{"id":"university","label":"University","forms":["universiti","university","kolej","college","kolej universiti","institut","institute","大学","大學","学院","學院","பல்கலைக்கழகம்","kampus","campus"],"cats":["University","College and University","Community College"]},{"id":"library","label":"Library","forms":["perpustakaan","library","图书馆","圖書館","நூலகம்"],"cats":["Library","College Library"]},{"id":"bus","label":"Bus Station","forms":["stesen bas","hentian bas","perhentian bas","bus stop","bus station","bus terminal","terminal bas","巴士站","巴士总站","巴士總站","公车站","公車站"],"cats":["Bus Station","Bus Stop","Bus Line"]},{"id":"train","label":"Train","forms":["stesen keretapi","keretapi","ktm","train station","railway station","rail station","stesen komuter","komuter","火车站","火車站","ரயில் நிலையம்"],"cats":["Train","Rail Station"]},{"id":"lrt","label":"Light Rail Station","forms":["lrt","stesen lrt","light rail","light rail station","light rail transit"],"cats":["Light Rail Station","Tram Station"]},{"id":"mrt","label":"Metro Station","forms":["mrt","stesen mrt","metro","metro station","mass rapid transit"],"cats":["Metro Station"]},{"id":"airport","label":"Airport","forms":["lapangan terbang","lapangan terbang antarabangsa","airport","机场","機場","விமான நிலையம்"],"cats":["Airport","International Airport","Airport Terminal"]},{"id":"post","label":"Post Office","forms":["pejabat pos","pos","post office","邮局","郵局","அஞ்சல் அலுவலகம்"],"cats":["Post Office"]},{"id":"park","label":"Park","forms":["taman awam","public park","park","公园","公園","பூங்கா"],"cats":["Park","National Park","Urban Park","Natural Park"]},{"id":"beach","label":"Beach","forms":["pantai","beach","海滩","海灘","沙滩","沙灘","கடற்கரை"],"cats":["Beach"]},{"id":"government","label":"Government Building","forms":["pejabat kerajaan","government office","government building","jabatan","jabatan kerajaan","政府大厦","政府大廈","政府机构","政府機構"],"cats":["Government Building","Government Department","City Hall"]},{"id":"cinema","label":"Movie Theater","forms":["panggung wayang","pawagam","cinema","movie theater","movie theatre","wayang","电影院","電影院"],"cats":["Movie Theater"]},{"id":"karaoke","label":"Karaoke Bar","forms":["karaoke","karaoke bar","ktv","卡拉OK","卡拉ok"],"cats":["Karaoke Bar"]},{"id":"nightlife","label":"Bar","forms":["bar","pub","kelab malam","night club","nightclub","酒吧","夜店","夜总会","夜總會"],"cats":["Bar","Pub","Night Club","Sports Bar","Cocktail Bar","Lounge"]},{"id":"stadium","label":"Stadium","forms":["stadium","stadium bola","padang bola","football field","soccer field","stadium sepak bola","体育场","體育場"],"cats":["Stadium","Soccer Field","Soccer Stadium","Football Field","Football Stadium"]},{"id":"badminton","label":"Badminton Court","forms":["gelanggang badminton","badminton court","badminton"],"cats":["Badminton Court"]},{"id":"swimming","label":"Swimming Pool","forms":["kolam renang","swimming pool","swimming"],"cats":["Swimming Pool"]},{"id":"golf","label":"Golf Course","forms":["padang golf","golf","golf course"],"cats":["Golf Course"]},{"id":"cemetery","label":"Cemetery","forms":["tanah perkuburan","kubur","perkuburan","cemetery","kuburan","墓地","坟场","墳場","墓园","墓園","மயானம்"],"cats":["Cemetery"]},{"id":"funeral","label":"Funeral Home","forms":["rumah pengebumian","funeral home","funeral parlour","pengurusan jenazah","funeral","殡仪馆","殯儀館"],"cats":["Funeral Home"]},{"id":"vet","label":"Veterinarian","forms":["klinik haiwan","veterinar","vet","veterinarian","klinik veterinar","animal clinic","pet clinic","兽医","獸醫"],"cats":["Veterinarian"]},{"id":"optometrist","label":"Optometrist","forms":["optik","optometrist","kedai cermin mata","eyecare","eye care","optical","cermin mata","眼镜店","眼鏡店"],"cats":["Optometrist","Eyecare Store"]},{"id":"bookstore","label":"Bookstore","forms":["kedai buku","bookstore","book store","book shop","bookshop","书店","書店"],"cats":["Bookstore"]},{"id":"electronics","label":"Electronics Store","forms":["kedai elektronik","electronics store","electronic shop","electronics"],"cats":["Electronics Store"]},{"id":"phone","label":"Mobile Phone Store","forms":["kedai telefon","kedai handphone","kedai hp","handphone shop","phone shop","mobile phone store","mobile shop","手机店","手機店"],"cats":["Mobile Phone Store"]},{"id":"hardware","label":"Hardware Store","forms":["kedai besi","kedai hardware","hardware","hardware store","kedai perkakas","五金店","五金行","五金"],"cats":["Hardware Store","Construction Supplies Store"]},{"id":"furniture","label":"Furniture and Home Store","forms":["kedai perabot","furniture","furniture store","家具店","家具"],"cats":["Furniture and Home Store"]},{"id":"clothing","label":"Clothing Store","forms":["kedai pakaian","kedai baju","clothing store","clothes shop","boutique","butik","服装店","服裝店","服饰店","服飾店"],"cats":["Clothing Store","Boutique","Women's Store","Men's Store"]},{"id":"pawn","label":"Pawn Shop","forms":["pajak gadai","kedai pajak","pawn shop","pawnshop","当铺","當鋪"],"cats":["Pawn Shop"]},{"id":"currency","label":"Currency Exchange","forms":["money changer","kedai tukaran wang","tukar wang","currency exchange","兑换","兌換","找换店","找換店"],"cats":["Currency Exchange"]},{"id":"insurance","label":"Insurance Agency","forms":["insurans","insurance","insurance agency","保险","保險"],"cats":["Insurance Agency"]},{"id":"preschool","label":"Preschool","forms":["tadika","taska","kindergarten","tuition centre","tuition center","pusat tuisyen","tuition","tuisyen","kelas tuisyen","幼儿园","幼兒園"],"cats":["Preschool","Nursery School","Daycare"]},{"id":"bubble_tea","label":"Bubble Tea Shop","forms":["bubble tea","bubbletea","bbt","tealive","chatime","珍珠奶茶"],"cats":["Bubble Tea Shop"]},{"id":"burger","label":"Burger Joint","forms":["burger","burgers","burger joint","汉堡","漢堡"],"cats":["Burger Joint","Fast Food Restaurant"]},{"id":"pizza","label":"Pizzeria","forms":["pizza","pizzeria","pizza place","披萨","披薩"],"cats":["Pizzeria"]},{"id":"dessert","label":"Dessert Shop","forms":["dessert","dessert shop","cendol","ais kacang","kuih","kek","ais krim","ice cream","ice cream parlor","甜品","甜品店","冰淇淋"],"cats":["Dessert Shop","Ice Cream Parlor"]},{"id":"apartment","label":"Apartment or Condo","forms":["apartment","apartmen","kondominium","condo","pangsapuri","flat"],"cats":["Apartment or Condo"]},{"id":"playground","label":"Playground","forms":["taman permainan","padang permainan","playground"],"cats":["Playground"]},{"id":"seafood","label":"Seafood Restaurant","forms":["seafood","makanan laut","海鲜","海鮮","海鲜楼"],"cats":["Seafood Restaurant","Fish and Chips Shop"]},{"id":"thai","label":"Thai Restaurant","forms":["thai","thai food","tomyam","tom yam","makanan thai","泰国菜","泰國菜"],"cats":["Thai Restaurant"]},{"id":"japanese","label":"Japanese Restaurant","forms":["japanese","japanese restaurant","jepun","makanan jepun","sushi","日本料理","日本菜"],"cats":["Japanese Restaurant","Sushi Restaurant"]},{"id":"korean","label":"Korean Restaurant","forms":["korean","korean restaurant","makanan korea","韩国菜","韓國菜"],"cats":["Korean Restaurant"]},{"id":"chinese_food","label":"Chinese Restaurant","forms":["chinese restaurant","chinese food","makanan cina","restoran cina","cantonese","cantonese restaurant","dim sum","点心","點心"],"cats":["Chinese Restaurant","Cantonese Restaurant","Dim Sum Restaurant","Hotpot Restaurant"]},{"id":"malay_food","label":"Malay Restaurant","forms":["malay restaurant","makanan melayu","restoran melayu","malay food"],"cats":["Malay Restaurant"]},{"id":"indian_food","label":"Indian Restaurant","forms":["indian restaurant","indian food","makanan india","restoran india","nasi kandar","banana leaf","daun pisang"],"cats":["Indian Restaurant","North Indian Restaurant","South Indian Restaurant","Mamak Restaurant"]},{"id":"toilet","label":"Public Toilet","forms":["toilet","tandas","tandas awam","washroom","restroom","bilik air","bilik mandi awam","tandas wanita","tandas lelaki"],"cats":["Public Bathroom"]},{"id":"parking","label":"Parking","forms":["parking","parkir","tempat letak kereta","tempat parkir","car park","parking lot","parking area"],"cats":[]}],"brands":[{"id":"7e","canon":"7 eleven","forms":["7e","7 eleven","seven eleven","7eleven","711","7 11","7 elevan","seven elevan"],"cats":["Convenience Store"]},{"id":"mcd","canon":"mcdonald","forms":["mcd","mcdonald","mcdonalds","macd","macdonald","麦当劳","麥當勞"],"cats":["Fast Food Restaurant","Burger Joint"]},{"id":"kfc","canon":"kfc","forms":["kfc","kentucky","kentucky fried chicken","肯德基"],"cats":["Fast Food Restaurant","Fried Chicken Joint"]},{"id":"burger_king","canon":"burger king","forms":["burger king","汉堡王","漢堡王"],"cats":["Fast Food Restaurant","Burger Joint"]},{"id":"pizza_hut","canon":"pizza hut","forms":["pizza hut","pizzahut"],"cats":[]},{"id":"dominos","canon":"domino","forms":["domino","dominos","domino s","domino pizza","达美乐","達美樂"],"cats":[]},{"id":"starbucks","canon":"starbucks","forms":["starbucks","starbuck","sbux","星巴克"],"cats":["Café","Coffee Shop"]},{"id":"old_town","canon":"old town","forms":["old town","oldtown","old town white coffee","owc"],"cats":["Coffee Shop","Café"]},{"id":"family_mart","canon":"family mart","forms":["family mart","familymart","全家","全家便利店"],"cats":["Convenience Store"]},{"id":"speedmart","canon":"99 speedmart","forms":["99 speedmart","speedmart","99 speed mart","speed mart"],"cats":["Convenience Store","Grocery Store"]},{"id":"mydin","canon":"mydin","forms":["mydin","mydin mohamed"],"cats":["Supermarket","Grocery Store"]},{"id":"lotus","canon":"lotus","forms":["lotus","lotuss","lotus s","tesco"],"cats":[]},{"id":"giant","canon":"giant","forms":["giant hypermarket","giant supermarket","giant"],"cats":[]},{"id":"aeon","canon":"aeon","forms":["aeon","aeon big"],"cats":[]},{"id":"petronas","canon":"petronas","forms":["petronas","petronas station","petronas petrol"],"cats":["Fuel Station"]},{"id":"shell","canon":"shell","forms":["shell","shell station","shell petrol"],"cats":["Fuel Station"]},{"id":"caltex","canon":"caltex","forms":["caltex","chevron"],"cats":["Fuel Station"]},{"id":"bhp","canon":"bhp","forms":["bhp","bhpetrol","bhp petrol","bh petrol"],"cats":["Fuel Station"]},{"id":"petron","canon":"petron","forms":["petron"],"cats":["Fuel Station"]},{"id":"maybank","canon":"maybank","forms":["maybank","mbb","may bank","maybank2u","马来亚银行","馬來亞銀行"],"cats":["Bank"]},{"id":"public_bank","canon":"public bank","forms":["public bank","pbb","大众银行","大眾銀行"],"cats":["Bank"]},{"id":"cimb","canon":"cimb","forms":["cimb","cimb bank"],"cats":["Bank"]},{"id":"rhb","canon":"rhb","forms":["rhb","rhb bank"],"cats":["Bank"]},{"id":"hong_leong","canon":"hong leong","forms":["hong leong","hlb","hong leong bank","丰隆银行","豐隆銀行"],"cats":["Bank"]},{"id":"ambank","canon":"ambank","forms":["ambank","am bank"],"cats":["Bank"]},{"id":"bank_islam","canon":"bank islam","forms":["bank islam","bimb","bimb bank","伊斯兰银行","伊斯蘭銀行"],"cats":["Bank"]},{"id":"bank_rakyat","canon":"bank rakyat","forms":["bank rakyat","bkr","bank kerjasama rakyat"],"cats":["Bank"]},{"id":"bsn","canon":"bank simpanan nasional","forms":["bsn","bank simpanan nasional","simpanan nasional"],"cats":["Bank"]},{"id":"bank_muamalat","canon":"bank muamalat","forms":["muamalat","bank muamalat","bmmb"],"cats":["Bank"]},{"id":"agrobank","canon":"agrobank","forms":["agrobank","agro bank","bank pertanian"],"cats":["Bank"]},{"id":"ocbc","canon":"ocbc","forms":["ocbc","华侨银行","華僑銀行"],"cats":["Bank"]},{"id":"uob","canon":"uob","forms":["uob","大华银行","大華銀行"],"cats":["Bank"]},{"id":"hsbc","canon":"hsbc","forms":["hsbc","汇丰银行","匯豐銀行","汇丰","匯豐"],"cats":["Bank"]},{"id":"stanchart","canon":"standard chartered","forms":["standard chartered","stanchart","渣打银行","渣打銀行","渣打"],"cats":["Bank"]},{"id":"uo_shin","canon":"uo shin","forms":["uo shin","uoshin","uo shin sushi"],"cats":[]},{"id":"guardian","canon":"guardian","forms":["guardian","guardian pharmacy"],"cats":["Pharmacy"]},{"id":"watsons","canon":"watsons","forms":["watsons","watson"],"cats":["Pharmacy"]},{"id":"caring","canon":"caring pharmacy","forms":["caring pharmacy","caring"],"cats":["Pharmacy"]}]};
+QU.setAliases(QU_ALIASES);
+
+// Prefix-quality tier: 3 exact name, 2.5 name starts with the phrase, 2 phrase inside the name, 1 every word matched.
 function fsqQuality(norm, qNorm) {
   if (norm === qNorm) return 3;
-  if (norm.startsWith(qNorm)) return 2;
+  if (norm.startsWith(qNorm)) return 2.5;
+  if ((' ' + norm + ' ').indexOf(' ' + qNorm + ' ') >= 0) return 2;
   return 1;
 }
-
-// Every query token must prefix-match some word of the name.
+// Every query word (or one of its aliases) must prefix-match some word of the name.
 // People type "1 utama" for "One Utama", "jln" for "jalan", "tmn" for "taman" ...
 const FSQ_ALIAS = { '1': 'one', '2': 'two', '3': 'three', '4': 'four', '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine',
   jln: 'jalan', jalan: 'jln', tmn: 'taman', taman: 'tmn', bdr: 'bandar', bandar: 'bdr', bkt: 'bukit', bukit: 'bkt', lrg: 'lorong', lorong: 'lrg', sri: 'seri', seri: 'sri', kg: 'kampung', kampung: 'kg' };
@@ -789,12 +1201,6 @@ function fsqTokMatch(w, t) {
 function fsqWeakTokMatch(w, t) {
   const a = FSQ_ALIAS_WEAK[t];
   return !!a && (w === a || (a.length > 3 && w.startsWith(a)));
-}
-function fsqMatches(words, qTokens) {
-  return qTokens.every(t => words.some(w => fsqTokMatch(w, t) || fsqWeakTokMatch(w, t)));
-}
-function fsqStrictMatches(words, qTokens) {
-  return qTokens.every(t => words.some(w => fsqTokMatch(w, t)));
 }
 // Typo tolerance. Used only when strict matching finds fewer than 3 places (see searchPlaces).
 // Fuzzy scores sit in a band (FZ_BAND) far below every strict score, so strict hits always rank first.
@@ -896,14 +1302,123 @@ async function fsqFuzzyItems(qTokens, keyList, getShard) {
 function fsqCanon(str) {   // "one utama" and "1 utama" compare equal
   return str.split(' ').map(w => (/^(one|two|three|four|five|six|seven|eight|nine)$/.test(w) ? FSQ_ALIAS[w] : w)).join(' ');
 }
-// Landmarks first, back-of-house junk last (toilets, loading bays, "Level 3" entries ...)
+// Landmarks are no longer prepended: curated rows and shard rows are scored together (see searchPlaces).
+// Back-of-house rows (toilets, loading bays, "Level 3" entries ...) sink unless the query asked for that category.
 const FSQ_BOOST = /shopping mall|airport|train station|metro station|light rail|bus station|hospital|university|stadium|theme park|monorail|ferry|terminal|hotel|market/i;
 const FSQ_JUNK = /toilet|washroom|restroom|loading|parking|conference|storage|intersection|elevator|lobby|entrance|office|meeting|smoking|atm/i;
-function fsqCatAdj(row) {
+// Category names that say little on their own: a name form ("Universiti ...") may still count as the intent.
+const FSQ_GENERIC_CAT = /^(education|medical center|hospital unit)$/i;
+// hit = the row is the category the query asked for. Without a hit, a boost is small so distance and tier still decide.
+function fsqCatAdj(row, hit) {
+  if (/\b(level|lvl|floor|block|gate)\s*\d/i.test(row[0])) return -1.2;
+  if (hit) return 0.8;
   const c = String(row[4] || '');
-  if (FSQ_JUNK.test(c) || /\b(level|lvl|floor|block|gate)\s*\d/i.test(row[0])) return -1.2;
-  if (FSQ_BOOST.test(c)) return /hotel/i.test(c) ? 0.3 : 1.1;
+  if (FSQ_JUNK.test(c)) return -1.2;
+  if (FSQ_BOOST.test(c)) return /hotel/i.test(c) ? 0.3 : 0.5;
   return 0;
+}
+
+
+// Category tile index (built by scripts/build_category_tiles.py): cat/<intent>/<latTile>_<lonTile>.json.
+// The folder is optional. Without it (or without cat/manifest.json) category-only queries fall back to
+// the name shards, so nothing here may throw or block a search.
+const FSQ_NAME_BONUS_KM = 3;        // a row whose name spells the query's own word counts this much nearer
+const FSQ_LM_WEAK = 1.0;            // score taken off a landmark matched only through a weak alias ("station")
+const FSQ_LM_BASE = 0.4;            // curated landmark bonus on the shard scale
+const FSQ_CATONLY_FLAT = true;      // category-only queries: every name tier counts the same (the typed words name a category, not a name)
+const FSQ_NONCAT_DEMOTE = 1.5;      // category named: name-only strict rows drop this much
+let catManP = null;
+const catTileP = new Map();
+function getCatManifest() {
+  if (!catManP) catManP = getJSON(PLACES_BASE.replace(/places\/$/, '') + 'cat/manifest.json', {}, 8000)
+    .then(m => (m && m.intents && typeof m.intents === 'object') ? m : { intents: {} })
+    .catch(() => ({ intents: {} }));
+  return catManP;
+}
+function getCatTile(id, key) {
+  const k = id + '/' + key;
+  if (!catTileP.has(k)) catTileP.set(k, getJSON(`${PLACES_BASE.replace(/places\/$/, '')}cat/${id}/${key}.json`, {}, 10000).catch(() => null));
+  return catTileP.get(k);
+}
+// Nearest rows of the query's categories: tiles in rings 0..2 around the centre, ring by ring, stopping once
+// the limit-th row is nearer than anything still unread. Returns search-result shape rows.
+async function catNearby(P, center, limit) {
+  const man = await getCatManifest();
+  const all = [];
+  for (const id of P.indexIds) {
+    const info = man.intents[id];
+    if (!info || !(info.tileDeg > 0)) continue;   // no tiles published for this intent
+    const T = info.tileDeg;
+    const la = Math.floor(center.lat / T), lo = Math.floor(center.lon / T);
+    const rows = [];
+    for (let ring = 0; ring <= 2; ring++) {
+      const keys = [];
+      for (let da = -ring; da <= ring; da++) for (let db = -ring; db <= ring; db++) {
+        if (Math.max(Math.abs(da), Math.abs(db)) === ring) keys.push((la + da) + '_' + (lo + db));
+      }
+      const files = await Promise.all(keys.map(k => getCatTile(id, k)));
+      for (const f of files) {
+        if (!f || !Array.isArray(f.rows) || !Array.isArray(f.cats)) continue;
+        for (const r of f.rows) rows.push([r[0], r[1], r[2], r[3], f.cats[r[4]]]);
+      }
+      const top = catRank(rows, center, P, limit);
+      // every tile not read yet lies at least ring*T degrees away (about 105 km per degree, the smaller side)
+      if (top.length >= limit && top[limit - 1].s <= ring * T * 105 - FSQ_NAME_BONUS_KM) break;
+    }
+    for (const r of rows) all.push(r);
+  }
+  return catRank(all, center, P, limit).map(p => ({
+    name: p.name, lat: p.lat, lon: p.lon, sub: p.sub || null, cat: p.cat || null, src: 'fsq', dk: Math.round(p.d * 1000)
+  }));
+}
+// rows: [name, lat, lon, locality, category]. Best limit rows, one per name within 150 m.
+function catRank(rows, center, P, limit) {
+  const cand = [];
+  for (const r of rows) {
+    const lat = Number(r[1]), lon = Number(r[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const d = haversineKm(center, { lat, lon });
+    const norm = normWords(r[0]).join(' ');
+    const bonus = P.nameRe && P.nameRe.test(norm) ? FSQ_NAME_BONUS_KM : 0;
+    cand.push({ name: String(r[0]), norm, lat, lon, sub: r[3] != null ? String(r[3]) : '', cat: r[4] != null ? String(r[4]) : '', d, s: d - bonus });
+  }
+  cand.sort((x, y) => (x.s - y.s) || (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+  const out = [];
+  for (const c of cand) {
+    if (out.length >= limit) break;
+    if (out.some(o => o.norm === c.norm && haversineKm(o, c) * 1000 < 150)) continue;
+    out.push(c);
+  }
+  return out;
+}
+// Adds the prepared rows of each shard key to out (a place is stored under each of its name-word shards).
+async function fsqLoadItems(keys, getShard, out, seen) {
+  for (const k of keys) {
+    let r;
+    try { r = await getShard(k); } catch (e) { r = null; }
+    if (!Array.isArray(r) || !r.length) continue;
+    for (const it of fsqPrepare(k, r)) {
+      const id = it.name + '|' + it.lat + '|' + it.lon;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(it);
+    }
+  }
+  return out;
+}
+// Locality words (towns, states, abbreviations). A row may miss them when it lies within FSQ_LOC_KM of the
+// user: most rows carry no locality in the data, and the user's position already says where they are.
+const FSQ_LOC = new Set(['kl', 'kuala', 'lumpur', 'pj', 'petaling', 'jaya', 'jb', 'johor', 'bahru', 'penang', 'pulau', 'pinang', 'pg',
+  'georgetown', 'george', 'bm', 'mertajam', 'kk', 'kota', 'kinabalu', 'melaka', 'malacca', 'ipoh', 'klang', 'shah', 'alam', 'seremban',
+  'kuching', 'kuantan', 'selangor', 'sabah', 'sarawak', 'kedah', 'perak', 'pahang', 'terengganu', 'kelantan']);
+const FSQ_LOC_KM = 20;
+// A query token matches when one of its spellings (QU alternatives) prefix-matches a name word. The strict
+// form ignores weak aliases; the plain form also takes "station" for "stesen" and the like.
+function fsqTokHitStrict(words, tk) {
+  return tk.alts.some(alt => alt.split(' ').every(aw => words.some(w => fsqTokMatch(w, aw))));
+}
+function fsqTokHit(words, tk) {
+  return tk.alts.some(alt => alt.split(' ').every(aw => words.some(w => fsqTokMatch(w, aw) || fsqWeakTokMatch(w, aw))));
 }
 
 /* ---------- picks.js (on-device click learning) ---------- */
@@ -1408,76 +1923,131 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 // Search places. Returns up to opts.limit (default 12) results of the shape
-// {name, lat, lon, sub, cat, src:'fsq', dk} where dk is distance in metres or null.
-// Score = quality tier minus a distance penalty of at most 0.5*bias, so the
-// tier dominates and distance orders results within a tier. Never throws.
+// {name, lat, lon, sub, cat, src, dk, score} where dk is distance in metres or null.
+// Score = match tier + category adjustment - distance penalty (bias), so the tier dominates and distance
+// orders results within a tier. With opts.landmarks (async getter) curated landmarks are scored on the same
+// scale and come back with lm: true. Never throws.
 async function searchPlaces(query, center, opts) {
   opts = opts || {};
   const limit = opts.limit > 0 ? opts.limit : 12;
   const bias = Number.isFinite(opts.bias) ? opts.bias : 1;
   if (typeof opts.getIndex !== 'function' || typeof opts.getShard !== 'function') return [];
+  const P = QU.parseQuery(query == null ? '' : String(query));
+  const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
 
-  const TOK_EXPAND = { kl: ['kuala', 'lumpur'], pj: ['petaling', 'jaya'], jb: ['johor', 'bahru'], kk: ['kota', 'kinabalu'], ss: ['seri', 'serdang'] };
-  let qTokens = [];
-  normWords(query).forEach(t => { if (TOK_EXPAND[t] && normWords(query).length > 1) qTokens.push(...TOK_EXPAND[t]); else qTokens.push(t); });
-  qTokens = qTokens.filter(t => t.length >= 2 || /^\d$/.test(t));
-  const sq = qTokens.filter(t => !FSQ_STOPWORDS.has(t));
-  if (sq.length) qTokens = sq;
-  if (!qTokens.length) return [];
-
-  const keyList = [];
-  const seenK = new Set();
-  const qWords = sigWords(String(query)).filter(t => t.length >= 2 && !/^\d+$/.test(t)).sort((a, b) => b.length - a.length);
-  qWords.forEach(t => {
-    const k = keyOf(t);
-    if (!seenK.has(k)) { seenK.add(k); keyList.push(k); }
-  });
-  const aliasKeys = [];   // shard of the alias word too ("station" also reads the "stesen" shard)
-  qWords.forEach(t => {
-    const a = FSQ_ALIAS[t] || FSQ_ALIAS_WEAK[t];
-    if (!a || /^\d$/.test(t)) return;
-    const k = keyOf(a);
-    if (!seenK.has(k)) { seenK.add(k); aliasKeys.push(k); }
-  });
-  let key = null, rows = null, items = [];
-  for (const k of keyList.slice(0, 3).concat(aliasKeys.slice(0, 2))) {
-    let r;
-    try { r = await opts.getShard(k); } catch (e) { r = null; }
-    if (!Array.isArray(r) || !r.length) continue;
-    const its = fsqPrepare(k, r);
-    if (its.some(it => fsqMatches(it.all, qTokens))) { key = k; rows = r; items = its; break; }
+  // Category only ("masjid", "hospital near me"): nearest rows of the category from the tiles, when published.
+  // Otherwise (no tiles) the name shards are searched for the category's own name forms, below.
+  if (P.catOnly && P.indexIds.length && hasCenter) {
+    const near = await catNearby(P, center, limit);
+    if (near.length) return near;
   }
-  if (qTokens.length === 1 && qTokens[0].length === 3) {
-    const base = qTokens[0];
+
+  // Name words. Category words are not required (they only add to the score); stopwords only when others remain.
+  let req = P.tokens.filter(tk => !FSQ_STOPWORDS.has(tk.t));
+  if (!req.length) req = P.tokens;
+  if (!req.length && !(P.catOnly && P.nameRe)) return [];
+  const locTk = req.filter(tk => FSQ_LOC.has(tk.t));
+  const nameTk = req.filter(tk => !FSQ_LOC.has(tk.t));
+  const hit = it => {
+    if (!req.length) return !!P.nameRe && P.nameRe.test(it.norm);
+    if (!nameTk.length) return req.every(tk => fsqTokHit(it.all, tk));     // locality-only query: strict
+    if (!nameTk.every(tk => fsqTokHit(it.all, tk))) return false;
+    if (locTk.every(tk => fsqTokHit(it.all, tk))) return true;
+    return hasCenter && haversineKm(center, it) <= FSQ_LOC_KM;
+  };
+
+  // Shard keys: name words (longest first), their alias spellings ("univ" for "um"), the weak alias
+  // ("stesen" for "station"), then the category's own name forms ("masj" for masjid). At most 5 shards.
+  const keys = [];
+  const addKey = k => { if (keys.indexOf(k) < 0) keys.push(k); };
+  const keyTk = nameTk.length ? nameTk : req;   // locality words are rarely in a name: their shards come last
+  keyTk.slice().sort((a, b) => b.t.length - a.t.length).forEach(tk => { if (!/^\d+$/.test(tk.t)) addKey(keyOf(tk.t)); });
+  keyTk.forEach(tk => tk.alts.slice(1).forEach(alt => alt.split(' ').forEach(w => { if (w.length >= 2 && !/^\d+$/.test(w)) addKey(keyOf(w)); })));
+  keyTk.forEach(tk => { const a = FSQ_ALIAS_WEAK[tk.t]; if (a) addKey(keyOf(a)); });
+  if (P.intentIds.length) {   // category words typed ("chatime", "kedai makan") first, then the category's own name forms
+    (P.matches || []).filter(m => m.kind !== 'near').forEach(m => m.form.split(' ').forEach(w => { if (w.length >= 3 && !FSQ_STOPWORDS.has(w)) addKey(keyOf(w)); }));
+    (P.formWords || []).forEach(f => addKey(keyOf(f)));
+  }
+  const seen = new Set();
+  const items = await fsqLoadItems(keys.slice(0, 5), opts.getShard, [], seen);
+  if (req.length === 1 && req[0].t.length === 3) {   // a 3-letter prefix also reads the 4-letter shards that start with it
+    const base = req[0].t;
     const ex = await Promise.all('abcdefghijklmnopqrstuvwxyz0123456789'.split('').map(async c => {
       let r; try { r = await opts.getShard(base + c); } catch (e) { r = null; }
       return Array.isArray(r) && r.length ? fsqPrepare(base + c, r) : [];
     }));
-    ex.forEach(a => { if (a.length) { items = items.concat(a); if (!key) key = base; } });
+    ex.forEach(a => a.forEach(it => { const id = it.name + '|' + it.lat + '|' + it.lon; if (!seen.has(id)) { seen.add(id); items.push(it); } }));
   }
-  const qNorm = fsqCanon(qTokens.join(' '));
-  const hasCenter = !!center && Number.isFinite(center.lat) && Number.isFinite(center.lon);
+
+  // Phrase to compare with the name, as typed and with each word swapped for its alias ("bdr utama" also as "bandar utama").
+  const alias = {};
+  req.forEach(tk => { const a = tk.alts.find(x => x !== tk.t); if (a) alias[tk.t] = a; });
+  const phraseWords = (P.intentIds.length && P.phrase ? P.phrase : req.map(tk => tk.t).join(' ')).split(' ');
+  const qns = [fsqCanon(phraseWords.join(' '))];
+  if (Object.keys(alias).length) qns.push(fsqCanon(phraseWords.map(w => alias[w] || w).join(' ')));
+  const tierOf = P.catOnly && FSQ_CATONLY_FLAT ? () => 1 : norm => Math.max(...qns.map(q => fsqQuality(norm, q)));
 
   const scored = [];
-  const hits = items.filter(it => fsqMatches(it.all, qTokens));
+  const hits = items.filter(hit);
   const boosts = typeof opts.boostMany === 'function' ? opts.boostMany(query, hits) : null;
   const boostOf = new Map();
   if (boosts) hits.forEach((it, i) => boostOf.set(it, boosts[i]));
-  const pushScored = (it, dist) => {
-    const q = fsqQuality(fsqCanon(it.norm), qNorm) + fsqCatAdj(it.row);
-    let d = null;
-    let score = q;
-    if (hasCenter) {
-      d = haversineKm(center, it);
-      score = q - bias * 2.2 * d / (d + 60);
+  const hitIds = new Set(hits.map(it => it.name + '|' + it.lat + '|' + it.lon));
+  const pushShard = (it, dist) => {
+    const cat = String(it.row[4] == null ? '' : it.row[4]);
+    const nameI = !!P.nameRe && P.nameRe.test(it.norm);
+    const hitI = P.categoryIntent ? (P.categoryIntent.test(cat) || (nameI && (!cat || FSQ_GENERIC_CAT.test(cat)))) : nameI;
+    const d = hasCenter ? haversineKm(center, it) : null;
+    let score = tierOf(fsqCanon(it.norm)) + fsqCatAdj(it.row, hitI) - (d == null ? 0 : bias * 2.2 * d / (d + 60));
+    if (dist === 0) {
+      score += boostOf.get(it) || 0;
+    } else if (hitI && P.intentIds.length) {
+      // typo hit of the category the query names: it competes with the strict name-only rows (see below)
+      score = score - 1.5 * dist;
+    } else {
+      score = FZ_BAND + score - 1.5 * dist;   // typo hit: always below strict hits
     }
-    if (boostOf.size && dist === 0) score += boostOf.get(it) || 0;
-    if (dist > 0) score = FZ_BAND + score - 1.5 * dist;   // typo hit: always below strict hits
-    scored.push({ it, d, score });
+    scored.push({ lm: false, lat: it.lat, lon: it.lon, name: it.name, norm: it.norm, cat, row: it.row, d, score, hitI, typo: dist > 0 });
   };
-  for (const it of hits) pushScored(it, 0);
-  if (scored.length < 3) {
-    for (const f of await fsqFuzzyItems(qTokens, keyList, opts.getShard)) pushScored(f.it, f.dist);
+  hits.forEach(it => pushShard(it, 0));
+  // The query names a category: name-only strict rows drop back (FSQ_NONCAT_DEMOTE); typo rows of that category join on the normal scale.
+  const catHitStrict = scored.some(s => s.hitI && !s.typo);
+  if (P.intentIds.length && req.length) {
+    for (const s of scored) if (!s.typo && !s.hitI) s.score -= FSQ_NONCAT_DEMOTE;
+  }
+  if ((scored.length < 3 || (P.intentIds.length && req.length && !catHitStrict)) && req.length) {
+    for (const f of await fsqFuzzyItems(req.map(tk => tk.t), keys, opts.getShard)) {
+      if (f.dist === 0 && hitIds.has(f.it.name + '|' + f.it.lat + '|' + f.it.lon)) continue;
+      pushShard(f.it, f.dist);
+    }
+  }
+
+  // Curated landmarks on the same scale: an exact or prefix alias earns a bonus, distance counts less,
+  // and a match only through a weak alias is pushed down.
+  if (opts.landmarks && (req.length || P.catOnly)) {
+    let lms = [];
+    try { lms = await opts.landmarks(); } catch (e) { lms = []; }
+    for (const m of lms) {
+      let best = 0, weakOnly = false;
+      if (!req.length) {   // category only: the name carries one of the forms, or the landmark's category is the intent
+        if (P.categoryIntent && P.categoryIntent.test(String(m.cat || ''))) best = 1;
+        if (P.nameRe && m.vs.some(v => P.nameRe.test(v.w.join(' ')))) best = 2.5;
+      }
+      for (const v of req.length ? m.vs : []) {
+        const strict = req.every(tk => fsqTokHitStrict(v.w, tk));
+        if (!strict && !req.every(tk => fsqTokHit(v.w, tk))) continue;
+        const q = Math.max(...qns.map(x => fsqQuality(v.n, x)));
+        if (strict && (!best || weakOnly || q > best)) { best = q; weakOnly = false; }
+        else if (!strict && !best) { best = q; weakOnly = true; }
+      }
+      if (!best) continue;
+      const norm = m.norm || (m.norm = normWords(m.name).join(' '));
+      const cat = String(m.cat || '');
+      const intentL = P.categoryIntent ? P.categoryIntent.test(cat) : (!!P.nameRe && P.nameRe.test(norm));
+      const d = hasCenter ? haversineKm(center, m) : null;
+      const score = best + FSQ_LM_BASE + (best >= 2.5 ? 0.6 : 0) + (intentL ? 0.8 : 0) - (weakOnly ? FSQ_LM_WEAK : 0) - (d == null ? 0 : bias * 0.8 * d / (d + 300));
+      scored.push({ lm: true, lat: m.lat, lon: m.lon, name: m.name, norm, cat, row: null, d, score });
+    }
   }
   if (!scored.length) return [];
 
@@ -1486,33 +2056,35 @@ async function searchPlaces(query, center, opts) {
     const da = a.d == null ? Infinity : a.d;
     const db = b.d == null ? Infinity : b.d;
     if (da !== db) return da < db ? -1 : 1;
-    return a.it.name < b.it.name ? -1 : a.it.name > b.it.name ? 1 : 0;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   });
 
-  // Drop entries with the same normalised name within 150 m of a kept one.
+  // Duplicates: the same normalised name within 150 m of a kept one (250 m when a landmark is involved),
+  // or a name that contains the kept name within 40 m of it.
   const kept = [];
-  const byNorm = new Map();
   for (const s of scored) {
     if (kept.length >= limit) break;
-    const group = byNorm.get(s.it.norm) || [];
-    if (group.some(o => haversineKm(o, s.it) * 1000 < 150)) continue;
-    group.push(s.it);
-    byNorm.set(s.it.norm, group);
+    const dup = kept.some(o => {
+      const dm = haversineKm(o, s) * 1000;
+      if (o.norm === s.norm) return dm < ((o.lm || s.lm) ? 250 : 150);
+      return dm < 40 && (o.norm.indexOf(s.norm) >= 0 || s.norm.indexOf(o.norm) >= 0);   // "Hospital X" and "Hospital X (HKL)" at one spot
+    });
+    if (dup) continue;
     kept.push(s);
   }
 
   return kept.map(s => ({
-    name: s.it.name,
-    lat: s.it.lat,
-    lon: s.it.lon,
-    sub: s.it.row[3] != null ? s.it.row[3] : null,
-    cat: s.it.row[4] != null ? s.it.row[4] : null,
+    name: s.name,
+    lat: s.lat,
+    lon: s.lon,
+    sub: s.lm ? null : (s.row[3] != null ? s.row[3] : null),
+    cat: s.cat || null,
+    lm: s.lm || undefined,
     src: 'fsq',
     dk: s.d == null ? null : Math.round(s.d * 1000),
     score: s.score
   }));
 }
-
 
 let placesIdxP=null;const placesShards=new Map();
 function getPlacesIdx(){if(!placesIdxP)placesIdxP=getJSON(PLACES_BASE+'index.json',{},8000).catch(()=>({keys:{}}));return placesIdxP}
@@ -1520,24 +2092,15 @@ function getPlacesShard(k){if(!placesShards.has(k))placesShards.set(k,getJSON(`$
 /* Curated landmarks (airports, malls, stations, hospitals, universities...). Small file, searched by name and by the aliases people really type. */
 let lmP=null;
 function getLandmarks(){if(!lmP)lmP=getJSON(PLACES_BASE.replace(/places\/$/,'')+'landmarks.json',{},8000).then(a=>a.map(r=>{const vs=[r[0],...(r[4]||[])].map(v=>{const w=normWords(v);return{w,n:fsqCanon(w.join(' '))}}).filter(v=>v.w.length);return{name:r[0],lat:r[1],lon:r[2],cat:r[3],vs}})).catch(()=>[]);return lmP}
-function landmarkRank(lms,query,c){
-  let qt=normWords(zhToLatin(query));if(qt.length>1)qt=qt.flatMap(t=>({kl:['kuala','lumpur'],pj:['petaling','jaya'],jb:['johor','bahru']})[t]||[t]);
-  qt=qt.filter(t=>t.length>=2||/^\d$/.test(t));if(!qt.length)return[];const qn=fsqCanon(qt.join(' '));const out=[];
-  for(const m of lms){let best=0,weak=false;for(const v of m.vs){let sc=0,wk=false;if(v.n===qn)sc=4;else if(v.n.startsWith(qn))sc=3;else if(fsqStrictMatches(v.w,qt))sc=2.2;else if(fsqMatches(v.w,qt)){sc=2.2;wk=true}if(sc>best){best=sc;weak=wk}}
-    if(!best)continue;const d=hav(c.lat,c.lng,m.lat,m.lon)/1000;out.push({lm:true,lat:m.lat,lon:m.lon,name:m.name,sub:m.cat,weak,score:best-0.8*d/(d+300)})}
-  return out.sort((a,b)=>b.score-a.score).slice(0,6)}
-async function fsqSearch(q){const qz=zhToLatin(q);if(!normWords(qz).length)return[];const c=map.getCenter();const r=await searchPlaces(qz,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
-  const shard=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · ')}));
-  let lm=[];try{lm=landmarkRank(await getLandmarks(),qz,c)}catch(e){}
-  const strongLm=lm.filter(m=>!m.weak),weakLm=lm.filter(m=>m.weak);
-  return [...strongLm,...shard.filter(p=>!lm.some(m=>hav(m.lat,m.lon,p.lat,p.lon)<250&&normWords(m.name).join(' ')===normWords(p.name).join(' '))),...weakLm]}
-// While navigating: wider pool (80), no distance bias, ranked by distance to the rest of the route (arRank). Same result shape as fsqSearch.
 function riderAlongNow(){const n=st.nav;if(!n||!n.r||!Array.isArray(n.r.cum))return 0;return n.r.cum[n.last]||0}
+// Curated landmarks are scored with the shard rows (searchPlaces), not prepended.
+async function fsqSearch(q){const qz=zhToLatin(q);if(!normWords(qz).length)return[];const c=map.getCenter();
+  const r=await searchPlaces(qz,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,landmarks:getLandmarks,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
+  return r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:p.lm?(p.cat||''):[p.cat,p.sub].filter(Boolean).join(' · ')}))}
+// While navigating: wider pool (80), no distance bias, ranked by distance to the rest of the route (arRank). Same result shape as fsqSearch.
 async function fsqSearchAlong(q,route,riderAlongM){const c=map.getCenter();
-  const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:80,bias:0,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
-  let lm=[];try{lm=landmarkRank(await getLandmarks(),q,c)}catch(e){}
-  const shard=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:[p.cat,p.sub].filter(Boolean).join(' · '),text:p.score}));
-  const cand=[...lm.map(m=>({...m,text:m.score})),...shard.filter(p=>!lm.some(m=>hav(m.lat,m.lon,p.lat,p.lon)<250&&normWords(m.name).join(' ')===normWords(p.name).join(' ')))];
+  const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:80,bias:0,landmarks:getLandmarks,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
+  const cand=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:p.lm?(p.cat||''):[p.cat,p.sub].filter(Boolean).join(' · '),text:p.score}));
   const ranked=arRank(arIndexFor(route),cand,{riderAlong:Number.isFinite(riderAlongM)?riderAlongM:0,limit:15});
   return ranked.map(x=>({lat:x.lat,lon:x.lon,name:x.name,sub:x.place.sub}))}
 
