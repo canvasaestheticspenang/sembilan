@@ -646,12 +646,15 @@ const FSQ_STOPWORDS = new Set([
 // key -> { rows, items }; items are prepared (normalised) rows of that shard.
 const FSQ_PREPARED = new Map();
 
+// Regex constants of normWords, built once (a regex literal inside the function is rebuilt on every call).
+const FSQ_ASCII_ONLY = /^[\x00-\x7f]*$/;
+const FSQ_NOT_AZ09 = /[^a-z0-9]+/;
 // Unicode-normalise, strip combining accents, lowercase, split on non [a-z0-9].
 // No stopword removal.
 function normWords(str) {
   const s0 = String(str == null ? '' : str);
   // ASCII fast path: NFKD and accent stripping change nothing there (same output, no string copies).
-  if (/^[\x00-\x7f]*$/.test(s0)) return s0.toLowerCase().replace(/['`]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  if (FSQ_ASCII_ONLY.test(s0)) return s0.toLowerCase().replace(/['`]/g, '').split(FSQ_NOT_AZ09).filter(Boolean);
   return s0
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
@@ -1313,9 +1316,10 @@ function zhToLatin(q) {
   }
   return out;
 }
+const FSQ_ROMAN = /^(ii|iii|iv|vi|vii|viii|ix)$/;
 function fsqTokMatch(w, t) {
-  if (/^\d$/.test(t)) return w === t || w === FSQ_ALIAS[t];       // a lone digit must be a whole word
-  if (/^(ii|iii|iv|vi|vii|viii|ix)$/.test(t)) return w === t;        // roman numerals: whole words ("iium" is not "2")
+  if (t.length === 1 && t >= '0' && t <= '9') return w === t || w === FSQ_ALIAS[t];       // a lone digit must be a whole word
+  if (FSQ_ROMAN.test(t)) return w === t;        // roman numerals: whole words ("iium" is not "2")
   if (w.startsWith(t)) return true;
   const a = FSQ_ALIAS[t];
   return !!a && (w === a || (a.length > 3 && w.startsWith(a)));
@@ -1516,8 +1520,9 @@ const FSQ_JUNK = /toilet|washroom|restroom|loading|parking|conference|storage|in
 // Category names that say little on their own: a name form ("Universiti ...") may still count as the intent.
 const FSQ_GENERIC_CAT = /^(education|medical center|hospital unit)$/i;
 // hit = the row is the category the query asked for. Without a hit, a boost is small so distance and tier still decide.
+const FSQ_LEVEL_RE = /\b(level|lvl|floor|block|gate)\s*\d/i;
 function fsqCatAdj(row, hit) {
-  if (/\b(level|lvl|floor|block|gate)\s*\d/i.test(row[0])) return -1.2;
+  if (FSQ_LEVEL_RE.test(row[0])) return -1.2;
   if (hit) return 0.8;
   const c = String(row[4] || '');
   if (FSQ_JUNK.test(c)) return -1.2;
@@ -1617,18 +1622,20 @@ function catRank(rows, center, P, limit) {
   return out;
 }
 // Adds the prepared rows of each shard key to out (a place is stored under each of its name-word shards).
+// The keys are requested together (one round trip, not one per key); rows are merged in key order, so the
+// output is the same as a sequential read.
 async function fsqLoadItems(keys, getShard, out, seen) {
-  for (const k of keys) {
-    let r;
-    try { r = await getShard(k); } catch (e) { r = null; }
-    if (!Array.isArray(r) || !r.length) continue;
+  const got = await Promise.all(keys.map(k => Promise.resolve().then(() => getShard(k)).catch(() => null)));
+  keys.forEach((k, i) => {
+    const r = got[i];
+    if (!Array.isArray(r) || !r.length) return;
     for (const it of fsqPrepare(k, r)) {
       const id = it.id;
       if (seen.has(id)) continue;
       seen.add(id);
       out.push(it);
     }
-  }
+  });
   return out;
 }
 // Locality words (towns, states, abbreviations). A row may miss them when it lies within FSQ_LOC_KM of the
@@ -1639,11 +1646,15 @@ const FSQ_LOC = new Set(['kl', 'kuala', 'lumpur', 'pj', 'petaling', 'jaya', 'jb'
 const FSQ_LOC_KM = 20;
 // A query token matches when one of its spellings (QU alternatives) prefix-matches a name word. The strict
 // form ignores weak aliases; the plain form also takes "station" for "stesen" and the like.
+// tk.aw caches the split spellings (a token is split once per query, not once per place).
+function fsqTokAlts(tk) {
+  return tk.aw || (tk.aw = tk.alts.map(alt => alt.split(' ')));
+}
 function fsqTokHitStrict(words, tk) {
-  return tk.alts.some(alt => alt.split(' ').every(aw => words.some(w => fsqTokMatch(w, aw))));
+  return fsqTokAlts(tk).some(aws => aws.every(aw => words.some(w => fsqTokMatch(w, aw))));
 }
 function fsqTokHit(words, tk) {
-  return tk.alts.some(alt => alt.split(' ').every(aw => words.some(w => fsqTokMatch(w, aw) || fsqWeakTokMatch(w, aw))));
+  return fsqTokAlts(tk).some(aws => aws.every(aw => words.some(w => fsqTokMatch(w, aw) || fsqWeakTokMatch(w, aw))));
 }
 
 /* ---------- picks.js (on-device click learning) ---------- */
@@ -2181,6 +2192,12 @@ async function searchPlaces(query, center, opts) {
     return hasCenter && haversineKm(center, it) <= FSQ_LOC_KM;
   };
 
+  // A stale search (the rider typed on while it ran, see opts.signal) stops before the scoring work.
+  const aborted = () => !!(opts.signal && opts.signal.aborted);
+  // The curated landmark list is requested now, with the shard reads (not after them): it is needed only for scoring.
+  const lmP = (opts.landmarks && (req.length || P.catOnly))
+    ? Promise.resolve().then(() => opts.landmarks()).catch(() => [])
+    : null;
   // Shard keys: name words (longest first), the category's own name forms ("masj" for masjid), their alias
   // spellings ("univ" for "um") and the weak alias ("stesen" for "station"). The category forms come before the
   // aliases so that a spelling variant can never push the category's own shard out. At most 5 shards.
@@ -2195,18 +2212,23 @@ async function searchPlaces(query, center, opts) {
   keyTk.forEach(tk => tk.alts.slice(1).forEach(alt => alt.split(' ').forEach(w => { if (w.length >= 2 && !/^\d+$/.test(w)) addKey(keyOf(w)); })));
   keyTk.forEach(tk => { const a = FSQ_ALIAS_WEAK[tk.t]; if (a) addKey(keyOf(a)); });
   const seen = new Set();
-  const items = await fsqLoadItems(keys.slice(0, 5), opts.getShard, [], seen);
   // A 3-letter prefix also reads the 4-letter shards that start with it. That holds for a one-word query and for a
   // multi-word one whose longest name word is the 3-letter prefix being typed ("jb cit" -> "City Square").
+  // These reads go out together with the name shards; their rows are merged after them, as before.
   const longest = keyTk.length ? keyTk.reduce((a, b) => (b.t.length >= a.t.length ? b : a)) : null;   // the last of the longest
-  if (longest && longest.t.length === 3 && !/\d/.test(longest.t)) {
+  const exP = (longest && longest.t.length === 3 && !/\d/.test(longest.t)) ? (() => {
     const base = longest.t;
-    const ex = await Promise.all('abcdefghijklmnopqrstuvwxyz0123456789'.split('').map(async c => {
+    return Promise.all('abcdefghijklmnopqrstuvwxyz0123456789'.split('').map(async c => {
       let r; try { r = await opts.getShard(base + c); } catch (e) { r = null; }
       return Array.isArray(r) && r.length ? fsqPrepare(base + c, r) : [];
     }));
+  })() : null;
+  const items = await fsqLoadItems(keys.slice(0, 5), opts.getShard, [], seen);
+  if (exP) {
+    const ex = await exP;
     ex.forEach(a => a.forEach(it => { const id = it.id; if (!seen.has(id)) { seen.add(id); items.push(it); } }));
   }
+  if (aborted()) return [];
 
   // Phrase to compare with the name, as typed and with each word swapped for its alias ("bdr utama" also as "bandar utama").
   const alias = {};
@@ -2256,7 +2278,9 @@ async function searchPlaces(query, center, opts) {
   const fzOn = !!req.length && (scored.length < 3 || !goodStrict || (P.intentIds.length && !scored.some(s => s.hitI && !s.typo)));
   fzMerge = fzOn && !goodStrict;
   if (fzOn) {
-    for (const f of await fsqFuzzyItems(req.map(tk => tk.t), keys, opts.getShard)) {
+    const fuzzy = await fsqFuzzyItems(req.map(tk => tk.t), keys, opts.getShard);
+    if (aborted()) return [];
+    for (const f of fuzzy) {
       if (f.dist === 0 && hitIds.has(f.it.id)) continue;
       pushShard(f.it, f.dist, f.corr);
     }
@@ -2267,9 +2291,9 @@ async function searchPlaces(query, center, opts) {
   // and a far landmark would beat every nearby completion on the flat bonus, so up to FSQ_SHORT_Q letters the landmark
   // distance counts on the shard rows' scale (2.2) instead of 0.8.
   const lmDistK = normWords(query == null ? '' : String(query)).join('').length <= FSQ_SHORT_Q ? 2.2 : 0.8;
-  if (opts.landmarks && (req.length || P.catOnly)) {
-    let lms = [];
-    try { lms = await opts.landmarks(); } catch (e) { lms = []; }
+  if (lmP) {
+    const lms = await lmP;
+    if (aborted()) return [];
     const lmName = nameTk.length ? nameTk : req;          // words the landmark name (or an alias) must carry
     const lmLoc = nameTk.length ? locTk : [];             // locality words, which may be missing when the landmark is close
     // The whole typed name, category words included, without locality words: "subang airport" equals that alias exactly.
@@ -2411,12 +2435,12 @@ function landmarkCatLabel(slug,name){
 function getLandmarks(){if(!lmP)lmP=getJSON(PLACES_BASE.replace(/places\/$/,'')+'landmarks.json',{},8000).then(a=>a.map(r=>{const vs=[r[0],...(r[4]||[])].map(v=>{const w=normWords(v);return{w,n:fsqCanon(w.join(' '))}}).filter(v=>v.w.length);return{name:r[0],lat:r[1],lon:r[2],cat:landmarkCatLabel(r[3],r[0]),vs,base:normWords(String(r[0]).replace(/\([^)]*\)/g,' ')).join(' ')}})).catch(()=>[]);return lmP}
 function riderAlongNow(){const n=st.nav;if(!n||!n.r||!Array.isArray(n.r.cum))return 0;return n.r.cum[n.last]||0}
 // Curated landmarks are scored with the shard rows (searchPlaces), not prepended.
-async function fsqSearch(q){const qz=zhToLatin(q);if(!normWords(qz).length)return[];const c=map.getCenter();
-  const r=await searchPlaces(qz,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,landmarks:getLandmarks,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
+async function fsqSearch(q,signal){const qz=zhToLatin(q);if(!normWords(qz).length)return[];const c=map.getCenter();
+  const r=await searchPlaces(qz,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:15,landmarks:getLandmarks,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its),signal});
   return r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:p.lm?(p.cat||''):[p.cat,p.sub].filter(Boolean).join(' · ')}))}
 // While navigating: wider pool (80), no distance bias, ranked by distance to the rest of the route (arRank). Same result shape as fsqSearch.
-async function fsqSearchAlong(q,route,riderAlongM){const c=map.getCenter();
-  const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:80,bias:0,landmarks:getLandmarks,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its)});
+async function fsqSearchAlong(q,route,riderAlongM,signal){const c=map.getCenter();
+  const r=await searchPlaces(q,{lat:c.lat,lon:c.lng},{getIndex:getPlacesIdx,getShard:getPlacesShard,limit:80,bias:0,landmarks:getLandmarks,boostMany:(qq,its)=>pickBoostMany(PICKS_STORE,qq,its),signal});
   const cand=r.map(p=>({lat:p.lat,lon:p.lon,name:p.name,sub:p.lm?(p.cat||''):[p.cat,p.sub].filter(Boolean).join(' · '),text:p.score}));
   const ranked=arRank(arIndexFor(route),cand,{riderAlong:Number.isFinite(riderAlongM)?riderAlongM:0,limit:15});
   return ranked.map(x=>({lat:x.lat,lon:x.lon,name:x.name,sub:x.place.sub}))}
@@ -2432,7 +2456,7 @@ async function ttSearch(q,signal){if(!S.tomtom)return[];
   const r=await Promise.allSettled([ttOne(q,signal,'&idxSet=POI'),ttOne(q,signal,'')]);return r.flatMap(x=>x.status==='fulfilled'?x.value:[])}
 function parseCoordQuery(q){let m=q.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)||q.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)||q.match(/[?&](?:q|ll|query|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i)||q.match(/^\s*(-?\d{1,2}\.\d{2,})\s*[, ]\s*(-?\d{2,3}\.\d{2,})\s*$/);
   if(!m)return null;const la=+m[1],lo=+m[2];if(la<-11||la>8||lo<94||lo>120)return null;return{lat:la,lon:lo,name:`${la.toFixed(5)}, ${lo.toFixed(5)}`,sub:S.lang==='ms'?'Koordinat / pautan peta':'Coordinates / map link'}}
-async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b,f]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal),st.nav?fsqSearchAlong(q,st.nav.r,riderAlongNow()):fsqSearch(q)]);
+async function geocode(q,signal){const pc=parseCoordQuery(q);if(pc)return[pc];const [a,b,f]=await Promise.allSettled([geocodeRaw(q,signal),ttSearch(q,signal),st.nav?fsqSearchAlong(q,st.nav.r,riderAlongNow(),signal):fsqSearch(q,signal)]);
   if(signal&&signal.aborted)throw new DOMException('Aborted','AbortError');
   if(a.status==='rejected'&&b.status==='rejected'&&f.status==='rejected')throw a.reason;
   const c=map.getCenter();
