@@ -2486,7 +2486,7 @@ function defaultSugg(){sPickQ='';const l=[];if(st.field==='origin'&&st.here)l.pu
   showSugg(l,true);if(!l.length)sugg.classList.add('hidden')}
 function onInput(e){st.field=e.target===qO?'origin':'dest';const q=e.target.value.trim();$('#btnClear').classList.toggle('hidden',!qD.value);clearTimeout(sTimer);if(sCtl)sCtl.abort();
   if(q.length<2){defaultSugg();return}
-  sTimer=setTimeout(async()=>{sCtl=new AbortController();try{const res=await geocode(q,sCtl.signal);sPickQ=q;showSugg(res)}catch(err){if(err.name!=='AbortError')showSugg([])}},300)}
+  sTimer=setTimeout(async()=>{sCtl=new AbortController();try{const res=await geocode(q,sCtl.signal);sPickQ=q;SLOG.shown(q,res.length);showSugg(res)}catch(err){if(err.name!=='AbortError')showSugg([])}},300)}
 qO.addEventListener('input',onInput);qD.addEventListener('input',onInput);
 qO.addEventListener('focus',()=>{st.field='origin';if(qO.value.trim().length<2)defaultSugg();qO.select()});
 qD.addEventListener('focus',()=>{st.field='dest';if(qD.value.trim().length<2)defaultSugg()});
@@ -2495,7 +2495,7 @@ sugg.addEventListener('click',e=>{const x=e.target.closest('.x');if(x){const it=
   const b=e.target.closest('.si[data-i]');if(!b)return;pick(suggItems[+b.dataset.i])});
 document.addEventListener('click',e=>{if(!e.target.closest('#top'))sugg.classList.add('hidden')});
 function pick(p){sugg.classList.add('hidden');document.activeElement.blur();
-  if(st.field!=='origin'&&!p.gps){try{recordPick(PICKS_STORE,sPickQ,p,Date.now())}catch(e){}}sPickQ='';
+  if(st.field!=='origin'&&!p.gps){try{recordPick(PICKS_STORE,sPickQ,p,Date.now())}catch(e){}SLOG.pick(sPickQ,p,suggItems.indexOf(p)+1,suggItems.length)}sPickQ='';
   if(st.field==='origin'){if(p.gps){st.origin=st.here?{lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true}:null;qO.value=''}else{st.origin={lat:p.lat,lon:p.lon,name:p.name,gps:false};qO.value=p.name}}
   else setDest({lat:p.lat,lon:p.lon,name:p.name,sub:p.sub||''});
   if(st.dest)computeRoutes()}
@@ -3039,6 +3039,31 @@ ta:{title:'பயணச் சுருக்கம்',dist:'தூரம்',t
   bindRow(){const up=()=>{const fl=this.left();$('#mFuelRow').style.display=fl==null?'none':'';if(fl!=null)$('#mFuelLeft').textContent=this.t('fuelLeft',fl)};
     $('#mFuel').onchange=e=>{this.setRange(e.target.value);e.target.value=this.fuel.range||'';up()};$('#mFill').onclick=()=>{this.fill();up()}}
 };
+/* ---------- opt-in search log: measures real searches so the search benchmark can use them. Off by default.
+   Stores the typed text, how many results came back, which result was picked (0 = none) and its name. No position,
+   no time, no account. Long digit runs (phone numbers) are masked. Nothing leaves the device until the rider presses Send. ---------- */
+const SLOG={MAX:300,L:{
+ms:{t:'Rekod carian saya',note:'Bantu baiki carian: Sembilan menyimpan apa yang anda taip dan tempat yang dipilih, pada peranti ini sahaja. Tiada lokasi atau masa direkod. Tiada apa-apa dihantar sehingga anda tekan Hantar.',send:n=>`Hantar (${n})`,clear:'Padam',cleared:'Rekod carian dipadam',none:'Tiada carian direkod lagi'},
+en:{t:'Record my searches',note:'Help improve search: Sembilan keeps what you type and the place you pick, on this device only. No location or time is recorded. Nothing is sent until you press Send.',send:n=>`Send (${n})`,clear:'Clear',cleared:'Search record cleared',none:'No searches recorded yet'},
+zh:{t:'记录我的搜索',note:'帮助改进搜索：Sembilan 仅在此设备上保存您输入的内容和选择的地点。不记录位置或时间。在您按“发送”之前不会发送任何内容。',send:n=>`发送 (${n})`,clear:'清除',cleared:'搜索记录已清除',none:'尚未记录任何搜索'},
+ta:{t:'என் தேடல்களைப் பதிவு செய்',note:'தேடலை மேம்படுத்த உதவுங்கள்: நீங்கள் தட்டச்சு செய்வதையும் தேர்ந்தெடுக்கும் இடத்தையும் Sembilan இந்தச் சாதனத்தில் மட்டுமே சேமிக்கும். இருப்பிடம் அல்லது நேரம் பதிவு செய்யப்படாது. நீங்கள் அனுப்பு என்பதை அழுத்தும் வரை எதுவும் அனுப்பப்படாது.',send:n=>`அனுப்பு (${n})`,clear:'அழி',cleared:'தேடல் பதிவு அழிக்கப்பட்டது',none:'இதுவரை தேடல்கள் பதிவு செய்யப்படவில்லை'}},
+  t(k,...a){const d=this.L[S.lang]||this.L.en;const v=d[k]!==undefined?d[k]:this.L.en[k];return typeof v==='function'?v(...a):v},
+  on:store.get('slog',false),rows:store.get('slogRows',[]),pend:null,
+  clean(x){return String(x||'').replace(/\d{5,}/g,'#').replace(/[|\n\r]+/g,' ').trim().slice(0,80)},
+  push(q,n,rank,name){this.rows.push([this.clean(q),n,rank,this.clean(name)]);if(this.rows.length>this.MAX)this.rows.splice(0,this.rows.length-this.MAX);store.set('slogRows',this.rows)},
+  // results appeared for a query; typing on from the previous query replaces it instead of logging every keystroke
+  shown(q,n){if(!this.on)return;const p=this.pend;if(p&&!(q.startsWith(p.q)||p.q.startsWith(q)))this.push(p.q,p.n,0,'');this.pend={q,n}},
+  pick(q,place,rank,n){if(!this.on||!q)return;this.pend=null;this.push(q,n||0,rank,place&&place.name)},
+  flush(){const p=this.pend;this.pend=null;if(this.on&&p)this.push(p.q,p.n,0,'')},
+  text(){return `Sembilan search log v1, ${this.rows.length} rows\nquery | results | picked rank (0 = none) | picked place\n`+this.rows.map(r=>r.join(' | ')).join('\n')},
+  clear(){this.rows=[];this.pend=null;store.set('slogRows',[])},
+  row(){return `<div class="tog"><span>${this.t('t')}</span><button class="sw ${this.on?'on':''}" id="mSlog"></button></div><div class="muted">${this.t('note')}</div>`+
+    `<div id="mSlogBtns" style="display:${this.on||this.rows.length?'flex':'none'};gap:8px;margin:6px 0"><button class="btn s" id="mSlogSend">${this.t('send',this.rows.length)}</button><button class="btn s" id="mSlogClear">${this.t('clear')}</button></div>`},
+  bind(){$('#mSlog').onclick=e=>{this.on=!this.on;store.set('slog',this.on);if(!this.on)this.pend=null;e.target.classList.toggle('on',this.on);$('#mSlogBtns').style.display=this.on||this.rows.length?'flex':'none'};
+    $('#mSlogClear').onclick=()=>{this.clear();$('#mSlogSend').textContent=this.t('send',0);toast(this.t('cleared'))};
+    $('#mSlogSend').onclick=()=>{this.flush();if(!this.rows.length){toast(this.t('none'));return}const x=this.text();
+      if(navigator.share)navigator.share({text:x}).catch(()=>{});else if(navigator.clipboard)navigator.clipboard.writeText(x).then(()=>toast(T('copied'))).catch(()=>{});else window.open(waUrl(x),'_blank','noopener')}}
+};
 const SC={FAR:400,NEAR:150,SNAP:25,all:null,loading:null,
   load(){if(!SC.loading)SC.loading=getJSON('data/cameras.json',{},15000).then(j=>{SC.all=j&&Array.isArray(j.c)?j:null;return SC.all}).catch(()=>{SC.loading=null;SC.all=null;return null});return SC.loading},
   // Cameras within SNAP metres of the route polyline, with their distance along it; opposite-side twins within 60 m are merged.
@@ -3116,6 +3141,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   ${SC.row()}
   ${RIDE.row()}
   <div class="tog"><span>${T('learnT')}</span><button class="btn s" id="mClearPicks">${T('learnB')}</button></div><div class="muted">${T('learnNote')}</div>
+  ${SLOG.row()}
   <div class="tog"><span>${T('look')}</span><button class="btn s" id="mLook">${T('lookT')}</button></div>
   <div class="tog"><span>${T('credits')}</span><button class="btn s" id="mCred">${T('creditsB')}</button></div>
   <div class="muted">${T('family')}</div><input class="field" id="mFam" inputmode="tel" value="${esc(S.family)}" placeholder="60…">
@@ -3127,7 +3153,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   $('#mRider').onclick=e=>{setRider(!S.rider);e.target.classList.toggle('on',S.rider)};
   $('#mFam').onchange=e=>{S.family=e.target.value.trim();save('family')};
   $('#mVoice').onclick=e=>{S.voice=!S.voice;save('voice');e.target.classList.toggle('on',S.voice)};
-  SC.bind();RIDE.bindRow();
+  SC.bind();RIDE.bindRow();SLOG.bind();
   $('#mClearPicks').onclick=()=>{clearAllPicks(PICKS_STORE);toast(T('learnDone'))};
   $('#mLook').onclick=openLook;
   $('#mCred').onclick=openCredits;

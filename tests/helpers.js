@@ -282,7 +282,7 @@ async function bootApp(opts = {}) {
 
   // The app's top-level functions and constants are not globals (the script is strict),
   // so expose the few internals the tests need by appending one line to the same script.
-  w.eval(`${app}\n;window.__app={RIDE,native,PLACES_BASE,REMOTE_DATA_BASE,map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,removeFace,zoomBy,MAP_THEMES,cartoonPal,meS,SC,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer},I,PICKS_STORE,searchPlaces,fsqSearch,fsqSearchAlong,recordPick,pickBoostMany,clearAllPicks,arRank,arIndexFor,zhToLatin,getLandmarks,landmarkCatLabel};\n;window.__app.rel=relApi();`);
+  w.eval(`${app}\n;window.__app={RIDE,SLOG,native,PLACES_BASE,REMOTE_DATA_BASE,map,geocode,plusFare,estToll,setTollD:(d)=>{tollD=d},S,st,T,trivial,instr,dedupePlaces,LOG,logEv,buildReport,waUrl,fmtLog,store,TH,sunTimes,applyTheme,setBase,CARTOON,setCartoon,removeFace,zoomBy,MAP_THEMES,cartoonPal,meS,SC,setAvatar,storeFace,faceCrop,setRouteColor,routeCols,openLook,drawMe,get routeLayer(){return routeLayer},I,PICKS_STORE,searchPlaces,fsqSearch,fsqSearchAlong,recordPick,pickBoostMany,clearAllPicks,arRank,arIndexFor,zhToLatin,getLandmarks,landmarkCatLabel};\n;window.__app.rel=relApi();`);
   w.__said = said;
 
   const ctx = {
