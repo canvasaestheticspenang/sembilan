@@ -550,7 +550,7 @@ const PLACES_BASE=(()=>{const m=document.querySelector('meta[name="sembilan-plac
 /* ---------- geolocation ---------- */
 let watchId=null;
 function startWatch(){if(!native.hasGeo()){toast(T('noGeo'));return}if(watchId!=null)return;watchId=native.watchPosition(onPos,e=>{if(!st.here)toast(T('noGeo'))},{lang:S.lang,web:{enableHighAccuracy:true,maximumAge:2000,timeout:25000}})}
-function onPos(p){const c=p.coords,first=!st.here;st.here={lat:c.latitude,lon:c.longitude,acc:c.accuracy||30,speed:c.speed,heading:c.heading,t:p.timestamp};
+function onPos(p){const c=p.coords,first=!st.here;st.here={lat:c.latitude,lon:c.longitude,acc:c.accuracy||30,speed:c.speed,heading:c.heading,t:p.timestamp};RIDE.pos(st.here);
   if(!st.origin||st.origin.gps)st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};
   if(first)applyTheme();
   if(first&&!st.dest)map.setView([st.here.lat,st.here.lon],15);
@@ -2902,7 +2902,7 @@ guardPush();
 /* ===== /BACK GUARD ===== */
 async function startNav(){startWatch();
   if(!st.origin||!st.origin.gps){toast(T('startGps'));st.origin=null;qO.value='';if(!st.here){toast(T('needOrigin'));return}st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};await computeRoutes();if(!st.routes.length)return}
-  const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null,sc:{r:null,cams:[],said:{}}};SC.start();logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
+  const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null,sc:{r:null,cams:[],said:{}}};SC.start();RIDE.start(st.dest&&st.dest.name);logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
   routeLayer.clearLayers();st.nav.line=addRouteLines(r.coords);st.nav.done=L.polyline([],{color:'#94a3b8',weight:7,opacity:.95,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
   document.body.classList.add('navigating');st.follow=true;applyView();keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
   st.follow=true;if(st.here)followTo(st.here.lat,st.here.lon,17,false);
@@ -2910,8 +2910,9 @@ async function startNav(){startWatch();
   relSaveRoute();navTick();positionFabs();tipCard()}
 function tipCard(){const tk='tipsSeen'+(S.rider?'Moto':'Car');if(store.get(tk,false))return;store.set(tk,true);const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   modal(`<h3>${T('tipT')}</h3><ul style="margin:0 0 12px;padding-left:20px;line-height:1.5"><li>${T('tipScreen')}</li>${ios?`<li>${T('tipIos')}</li>`:''}${S.rider?`<li>${T('tipRider')}</li>`:''}</ul><div style="text-align:right"><button class="btn p" data-close>${T('tipOk')}</button></div>`)}
-function endNav(){relClear();relShow('');if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
-  if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}}
+function endNav(){const ride=RIDE.end();$('#toast').classList.remove('show');relClear();relShow('');if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
+  if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}
+  if(ride)RIDE.card(ride)}
 $('#btnEnd').onclick=endNav;
 $('#hdTap').onclick=()=>{st.follow=false;applyView()};
 (()=>{let x0=0,y0=0,one=false;const el=$('#hdTap');
@@ -2954,7 +2955,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProg
   $('#nIco').innerHTML=arrow(s,52,'#fff');$('#nDist').textContent=fmtDist(dist);$('#nText').textContent=(s.maneuver.type==='arrive'&&remD>80)?instr({...s,maneuver:{type:'continue',modifier:'straight'}}):instr(s);
   const nx=r.steps.slice(si+1).find(x=>!trivial(x));const th=$('#then');if(nx&&nx.along-s.along<400&&s.maneuver.type!=='arrive'){th.innerHTML=`${T('then')} ${arrow(nx,18,'#fff')}`;th.classList.remove('hidden')}else th.classList.add('hidden');
   $('#nEta').textContent=fmtClock(new Date(Date.now()+remT*1000));$('#nRem').textContent=`${fmtDur(remT)} · ${fmtDist(remD)}`;
-  const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);SC.tick(n,r,along,v);
+  const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);SC.tick(n,r,along,v);RIDE.navTick(n,r,along,remD);
   // voice prompts
   const fast=v>16;const far=fast?1500:400,mid=fast?500:150,now=Math.max(35,v*3.5);const txt=instr(s);const key=si+':';
   if(s.maneuver.type==='arrive'){if(remD<35&&!n.arrived){n.arrived=true;logEv('arrive',{});say(T('arrive'));const d=st.dest;setTimeout(()=>{if(st.nav){endNav();if(S.rider&&S.family)arrivalModal(d)}},4000)}}
@@ -2981,7 +2982,8 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProg
 map.on('dragstart',()=>{if(st.nav){st.follow=false;applyView()}});
 function openWA(text){const num=(S.family||'').replace(/\D/g,'');const a=document.createElement('a');a.href=`https://wa.me/${num}?text=${encodeURIComponent(text)}`;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
 $('#btnFam').onclick=()=>{const n=st.nav;if(!n)return;openWA(T('startMsg')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000))))};
-function arrivalModal(d){modal(`<h3>${T('arrive')}</h3><p class="muted">${esc(d.name)}</p><button class="btn p" id="mSafe" style="width:100%">${T('safeArr')} · ${T('tellFamily')}</button><div style="margin-top:10px;text-align:right"><button class="btn s" data-close>${T('close')}</button></div>`);
+function arrivalModal(d){const rs=RIDE.last&&Date.now()-RIDE.last.at<15000?RIDE.last:null;modal(`<h3>${T('arrive')}</h3><p class="muted">${esc(d.name)}</p>${rs?RIDE.html(rs):''}<button class="btn p" id="mSafe" style="width:100%">${T('safeArr')} · ${T('tellFamily')}</button><div style="margin-top:10px;text-align:right"><button class="btn s" data-close>${T('close')}</button></div>`);
+  if(rs)RIDE.bind(rs);
   $('#mSafe').onclick=()=>{openWA(T('safeMsg')(d.name));$('#modal').classList.add('hidden')}}
 function setRider(on){S.rider=on;save('rider');document.body.classList.toggle('rider',on);$('#btnRider').classList.toggle('on',on);
   if(on&&!S.radar){S.radar=true;save('radar');setRadar()}
@@ -2993,6 +2995,50 @@ $('#btnRider').onclick=()=>{setRider(!S.rider);toast(S.rider?T('riderOn'):T('rid
    Cameras within 25 m of the active route are warned about at ~400 m and ~150 m ahead (banner + voice).
    Never complete: unlisted cameras exist, so the settings text says to obey signs. Hooks elsewhere: startNav (SC.start),
    navTick (SC.tick), POI camera alert (SC.owns), settings modal (SC.row / SC.bind). */
+/* ---------- ride tracker: trip summary card + fuel range reminder. Everything stays on this device. ----------
+   Distance is measured from GPS fixes while the app is open. The card deliberately shows no top speed. */
+const RIDE={L:{
+ms:{title:'Ringkasan perjalanan',dist:'Jarak',time:'Masa menunggang',avg:'Purata',total:(k,n)=>`Jumlah dengan Sembilan: ${k} km dalam ${n} perjalanan`,share:'Kongsi',shareTxt:(k,t)=>`Saya menunggang ${k} km dalam ${t} dengan Sembilan.`,fuelSet:'Jarak setangki penuh (km)',fuelNote:'Sembilan mengira jarak sejak isian terakhir dan mengingatkan anda sebelum minyak habis. Jarak dikira hanya semasa aplikasi dibuka. Kosongkan untuk mematikan.',fuelLeft:k=>`Minyak: kira-kira ${k} km lagi`,filled:'Baru isi penuh',filledOk:'Kiraan minyak ditetapkan semula',fuelLow:k=>`Minyak hampir habis, kira-kira ${k} kilometer lagi.`,fuelShort:(k,n)=>`Minyak cukup untuk kira-kira ${k} kilometer; perjalanan ini ${n} kilometer. Isi minyak dalam perjalanan.`,fuelNext:(n,d)=>`Stesen minyak seterusnya: ${n}, ${d}.`},
+en:{title:'Ride summary',dist:'Distance',time:'Riding time',avg:'Average',total:(k,n)=>`Total with Sembilan: ${k} km over ${n} rides`,share:'Share',shareTxt:(k,t)=>`I rode ${k} km in ${t} with Sembilan.`,fuelSet:'Range on a full tank (km)',fuelNote:'Sembilan counts distance since your last fill and reminds you before you run low. Distance is counted only while the app is open. Leave empty to turn off.',fuelLeft:k=>`Fuel: about ${k} km left`,filled:'Just filled up',filledOk:'Fuel count reset',fuelLow:k=>`Fuel is low, about ${k} kilometres left.`,fuelShort:(k,n)=>`Fuel for about ${k} kilometres; this trip is ${n} kilometres. Fill up on the way.`,fuelNext:(n,d)=>`Next petrol station: ${n}, ${d}.`},
+zh:{title:'行程总结',dist:'距离',time:'骑行时间',avg:'平均速度',total:(k,n)=>`使用 Sembilan 共骑行 ${k} 公里，${n} 次行程`,share:'分享',shareTxt:(k,t)=>`我用 Sembilan 骑行了 ${k} 公里，用时 ${t}。`,fuelSet:'满油可行驶距离（公里）',fuelNote:'Sembilan 会计算上次加油后的行驶距离，并在油量偏低前提醒您。仅在应用打开时计算距离。留空即可关闭。',fuelLeft:k=>`油量：约剩 ${k} 公里`,filled:'刚加满油',filledOk:'油量计算已重置',fuelLow:k=>`油量偏低，大约还能行驶 ${k} 公里。`,fuelShort:(k,n)=>`油量约可行驶 ${k} 公里，本次行程 ${n} 公里。请在途中加油。`,fuelNext:(n,d)=>`下一个加油站：${n}，${d}。`},
+ta:{title:'பயணச் சுருக்கம்',dist:'தூரம்',time:'ஓட்டிய நேரம்',avg:'சராசரி வேகம்',total:(k,n)=>`Sembilan உடன் மொத்தம்: ${n} பயணங்களில் ${k} கி.மீ`,share:'பகிர்',shareTxt:(k,t)=>`நான் Sembilan உடன் ${t} நேரத்தில் ${k} கி.மீ ஓட்டினேன்.`,fuelSet:'முழு டேங்கில் செல்லும் தூரம் (கி.மீ)',fuelNote:'கடைசியாக நிரப்பியதிலிருந்து சென்ற தூரத்தை Sembilan கணக்கிட்டு, எரிபொருள் குறையும் முன் நினைவூட்டும். செயலி திறந்திருக்கும் போது மட்டுமே தூரம் கணக்கிடப்படும். அணைக்க காலியாக விடுங்கள்.',fuelLeft:k=>`எரிபொருள்: சுமார் ${k} கி.மீ மீதம்`,filled:'இப்போது நிரப்பினேன்',filledOk:'எரிபொருள் கணக்கு மீட்டமைக்கப்பட்டது',fuelLow:k=>`எரிபொருள் குறைவு, சுமார் ${k} கிலோமீட்டர் மட்டுமே செல்லும்.`,fuelShort:(k,n)=>`எரிபொருள் சுமார் ${k} கிலோமீட்டருக்கு போதும்; இந்தப் பயணம் ${n} கிலோமீட்டர். வழியில் எரிபொருள் நிரப்புங்கள்.`,fuelNext:(n,d)=>`அடுத்த பெட்ரோல் நிலையம்: ${n}, ${d}.`}},
+  t(k,...a){const d=this.L[S.lang]||this.L.en;const v=d[k]!==undefined?d[k]:this.L.en[k];return typeof v==='function'?v(...a):v},
+  prev:null,trip:null,last:null,_fs:0,
+  fuel:store.get('fuel',{range:0,km:0}),total:store.get('rideTotal',{km:0,n:0}),
+  // one GPS fix: add the distance from the previous fix when both are trustworthy and the rider is moving
+  pos(h){const p=this.prev;this.prev=h;if(!p||!h)return;const dt=(h.t-p.t)/1000;if(!(dt>0&&dt<30)||(h.acc||0)>50||(p.acc||0)>50)return;
+    const d=hav(p.lat,p.lon,h.lat,h.lon),v=d/dt;if(v>70)return; // a GPS jump, not a ride
+    if(!((h.speed!=null&&h.speed>=0)?h.speed>0.8:v>1))return; // standing still: ignore GPS jitter
+    const km=d/1000;if(this.fuel.range>0){this.fuel.km+=km;if(this.fuel.km-this._fs>=0.2)this.saveFuel()}
+    if(this.trip){this.trip.km+=km;this.trip.mov+=dt}},
+  saveFuel(){this._fs=this.fuel.km;store.set('fuel',this.fuel)},
+  left(){return this.fuel.range>0?Math.max(0,Math.round(this.fuel.range-this.fuel.km)):null},
+  setRange(v){const n=Math.round(+v);this.fuel.range=n>=20&&n<=1500?n:0;if(!this.fuel.range)this.fuel.km=0;this.saveFuel()},
+  fill(){this.fuel.km=0;this.saveFuel();toast(this.t('filledOk'))},
+  start(dest){this.trip={km:0,mov:0,dest:dest||''};this.last=null},
+  // closes the trip; returns it when it is long enough to be worth a card
+  end(){const t=this.trip;this.trip=null;if(this.fuel.range>0)this.saveFuel();if(!t||t.km<0.3)return null;
+    this.total.km+=t.km;this.total.n++;store.set('rideTotal',this.total);this.last={...t,at:Date.now()};return this.last},
+  kmTxt(k){return k<10?k.toFixed(1):String(Math.round(k))},
+  html(t){const avg=t.mov>0?Math.round(t.km/(t.mov/3600)):0,u=S.lang==='ms'?'km/j':'km/h',fl=this.left();
+    const cell=(v,l)=>`<div style="flex:1;text-align:center"><div style="font-size:22px;font-weight:800;line-height:1.2">${v}</div><div class="muted" style="font-size:12px">${l}</div></div>`;
+    return `<div id="rideSum"><div style="display:flex;gap:8px;margin:10px 0">${cell(this.kmTxt(t.km)+' km',this.t('dist'))}${cell(fmtDur(t.mov),this.t('time'))}${cell(avg+' '+u,this.t('avg'))}</div>`+
+      `<div class="muted" style="font-size:12px">${this.t('total',this.kmTxt(this.total.km),this.total.n)}</div>`+
+      (fl!=null?`<div class="tog" style="margin-top:8px"><span id="rideFuel">${this.t('fuelLeft',fl)}</span><button class="btn s" id="rideFill">${this.t('filled')}</button></div>`:'')+`</div>`},
+  bind(t){const f=$('#rideFill');if(f)f.onclick=()=>{this.fill();$('#rideFuel').textContent=this.t('fuelLeft',this.left())};
+    const sh=$('#rideShare');if(sh)sh.onclick=()=>{const x=this.t('shareTxt',this.kmTxt(t.km),fmtDur(t.mov));if(navigator.share)navigator.share({text:x}).catch(()=>{});else if(navigator.clipboard)navigator.clipboard.writeText(x).then(()=>toast(T('copied'))).catch(()=>{})}},
+  card(t){modal(`<h3>${this.t('title')}</h3>${t.dest?`<p class="muted" style="margin:0">${esc(t.dest)}</p>`:''}${this.html(t)}<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="btn s" id="rideShare">${this.t('share')}</button><button class="btn p" data-close>${T('close')}</button></div>`);this.bind(t)},
+  // while navigating: warn once when fuel is low or will not last the trip, and again when nearly empty
+  navTick(n,r,along,remD){const left=this.left();if(left==null)return;const need=Math.round(remD/1000);
+    const low=left<=Math.max(15,this.fuel.range*.15),short=left<need+5,lvl=left<=5?2:(low||short)?1:0;if(lvl<=(n.fuelSaid||0))return;n.fuelSaid=lvl;
+    const nf=Array.isArray(r.pois)&&r.pois.find(p=>p.type==='fuel'&&p.along>along);
+    const msg=(short&&!low?this.t('fuelShort',left,need):this.t('fuelLow',left))+(nf?' '+this.t('fuelNext',nf.name,fmtDist(nf.along-along)):'');
+    logEv('fuel',{left,need});toast(msg);say(msg)},
+  row(){const fl=this.left();return `<div class="muted">${this.t('fuelSet')}</div><input class="field" id="mFuel" inputmode="numeric" value="${this.fuel.range||''}" placeholder="150">`+
+    `<div class="tog" id="mFuelRow" ${fl==null?'style="display:none"':''}><span id="mFuelLeft">${fl==null?'':this.t('fuelLeft',fl)}</span><button class="btn s" id="mFill">${this.t('filled')}</button></div><div class="muted">${this.t('fuelNote')}</div>`},
+  bindRow(){const up=()=>{const fl=this.left();$('#mFuelRow').style.display=fl==null?'none':'';if(fl!=null)$('#mFuelLeft').textContent=this.t('fuelLeft',fl)};
+    $('#mFuel').onchange=e=>{this.setRange(e.target.value);e.target.value=this.fuel.range||'';up()};$('#mFill').onclick=()=>{this.fill();up()}}
+};
 const SC={FAR:400,NEAR:150,SNAP:25,all:null,loading:null,
   load(){if(!SC.loading)SC.loading=getJSON('data/cameras.json',{},15000).then(j=>{SC.all=j&&Array.isArray(j.c)?j:null;return SC.all}).catch(()=>{SC.loading=null;SC.all=null;return null});return SC.loading},
   // Cameras within SNAP metres of the route polyline, with their distance along it; opposite-side twins within 60 m are merged.
@@ -3068,6 +3114,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   <div class="tog"><span>${T('rider')}</span><button class="sw ${S.rider?'on':''}" id="mRider"></button></div>
   <div class="tog"><span>${T('voice')}</span><button class="sw ${S.voice?'on':''}" id="mVoice"></button></div>
   ${SC.row()}
+  ${RIDE.row()}
   <div class="tog"><span>${T('learnT')}</span><button class="btn s" id="mClearPicks">${T('learnB')}</button></div><div class="muted">${T('learnNote')}</div>
   <div class="tog"><span>${T('look')}</span><button class="btn s" id="mLook">${T('lookT')}</button></div>
   <div class="tog"><span>${T('credits')}</span><button class="btn s" id="mCred">${T('creditsB')}</button></div>
@@ -3080,7 +3127,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   $('#mRider').onclick=e=>{setRider(!S.rider);e.target.classList.toggle('on',S.rider)};
   $('#mFam').onchange=e=>{S.family=e.target.value.trim();save('family')};
   $('#mVoice').onclick=e=>{S.voice=!S.voice;save('voice');e.target.classList.toggle('on',S.voice)};
-  SC.bind();
+  SC.bind();RIDE.bindRow();
   $('#mClearPicks').onclick=()=>{clearAllPicks(PICKS_STORE);toast(T('learnDone'))};
   $('#mLook').onclick=openLook;
   $('#mCred').onclick=openCredits;
