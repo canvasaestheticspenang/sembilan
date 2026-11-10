@@ -66,11 +66,42 @@ describe('service worker', () => {
     }
   });
 
+  it('rider data: small files stay fresh, big ones answer from the saved copy at once', async () => {
+    const { sw } = fakeEnv();
+    const c = sw.classifyData;
+    for (const f of ['index.json', 'cameras.json', 'tolls.json', 'plus-fares.json']) assert.equal(c('/sembilan/data/' + f), 'fresh', f);
+    for (const f of ['landmarks.json', 'places/0a1.json', 't/5_100.json', 'cat/fuel/5_100.json']) assert.equal(c('/sembilan/data/' + f), 'fast', f);
+    assert.equal(c('/sembilan/data/secret.txt'), null);
+    assert.equal(c('/sembilan/index.html'), null);
+  });
+
+  it('saved data and tiles are kept across app updates', () => {
+    const { sw } = fakeEnv();
+    assert.doesNotMatch(sw.DATA_CACHE, /s9-v\d+/);
+    assert.doesNotMatch(sw.TILE_CACHE, /s9-v\d+/);
+    assert.match(sw.SHELL_CACHE, /s9-v\d+/, 'the app itself is still replaced on update');
+  });
+
+  it('after install the landmark, camera and index files are saved; with no signal a saved place shard still answers', async () => {
+    let offline = false;
+    const e = fakeEnv({ failing: () => offline });
+    await e.sw.precacheData();
+    const saved = [...e.stores.get(e.sw.DATA_CACHE).keys()];
+    for (const f of ['landmarks.json', 'cameras.json', 'index.json']) assert.ok(saved.some((u) => u.endsWith('/data/' + f)), f);
+    const shard = 'https://example.org/app/data/places/0a1.json';
+    const first = await e.sw.staleWhileRevalidate({ url: shard }, e.sw.DATA_CACHE);
+    assert.equal(first.ok, true);
+    await new Promise((r) => setTimeout(r, 5));
+    offline = true;
+    const again = await e.sw.staleWhileRevalidate({ url: shard }, e.sw.DATA_CACHE);
+    assert.equal(again.body, 'body:' + shard, 'served from the saved copy with no network');
+  });
+
   it('lruVictims returns the oldest entries beyond the limit', () => {
     const { sw } = fakeEnv();
     assert.deepEqual([...sw.lruVictims(['a', 'b', 'c', 'd'], 3)], ['a']);
     assert.deepEqual([...sw.lruVictims(['a', 'b'], 3)], []);
-    assert.equal(sw.MAX_TILES, 300);
+    assert.equal(sw.MAX_TILES, 600);
   });
 
   it('install stores the shell; a missing index.html fails the install', async () => {
@@ -107,18 +138,18 @@ describe('service worker', () => {
     await assert.rejects(e.send(TILE.replace('8174', '9999')), 'unseen tile fails (no fake data)');
   });
 
-  it('keeps at most 300 tiles and evicts the least recently used', async () => {
+  it('keeps at most 600 tiles and evicts the least recently used', async () => {
     const e = fakeEnv();
     const url = (i) => `https://tile.openstreetmap.org/15/${i}/1.png`;
-    for (let i = 0; i < 300; i++) await e.send(url(i));
+    for (let i = 0; i < 600; i++) await e.send(url(i));
     await new Promise((r) => setTimeout(r, 20));
     // touch tile 0 so it becomes the newest
     await e.send(url(0));
     await new Promise((r) => setTimeout(r, 10));
-    for (let i = 300; i < 305; i++) { await e.send(url(i)); await new Promise((r) => setTimeout(r, 5)); }
+    for (let i = 600; i < 605; i++) { await e.send(url(i)); await new Promise((r) => setTimeout(r, 5)); }
     await new Promise((r) => setTimeout(r, 20));
     const keys = [...e.stores.get(e.sw.TILE_CACHE).keys()];
-    assert.equal(keys.length, 300);
+    assert.equal(keys.length, 600);
     assert.ok(keys.includes(url(0)), 'recently viewed tile survived');
     assert.ok(!keys.includes(url(1)) && !keys.includes(url(5)), 'oldest tiles were evicted');
   });

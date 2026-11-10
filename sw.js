@@ -1,14 +1,17 @@
 // Sembilan service worker: keeps the app shell, Leaflet, icons, the POI file and
-// viewed map tiles (raster Esri/OSM and OpenFreeMap vector tiles, ~300, LRU) available offline. Routing, search, Overpass, weather and radar
+// viewed map tiles (raster Esri/OSM and OpenFreeMap vector tiles, ~600, LRU) available offline. Landmarks, speed cameras and the
+// nationwide petrol/R&R/camera/shelter tiles are downloaded in the background after install (about 1 MB) so they work without signal. Routing, search, Overpass, weather and radar
 // requests are never intercepted; POST and other non-GET requests are never cached.
 
-const VERSION = 's9-v46';
+const VERSION = 's9-v47';
 const PREFIX = 'sembilan-';
 const SHELL_CACHE = `${PREFIX}${VERSION}-shell`;
-const DATA_CACHE = `${PREFIX}${VERSION}-data`;
-const TILE_CACHE = `${PREFIX}${VERSION}-tiles`;
+// Data and viewed map tiles survive app updates: an update used to wipe them, so a rider who updated
+// on Wi-Fi and then rode without signal had no map, cameras or search. Data is refreshed from the network when online.
+const DATA_CACHE = `${PREFIX}data-1`;
+const TILE_CACHE = `${PREFIX}tiles-1`;
 const META_CACHE = `${PREFIX}${VERSION}-meta`;
-const MAX_TILES = 300; // bounded LRU of viewed map tiles (raster and vector)
+const MAX_TILES = 600; // bounded LRU of viewed map tiles (raster and vector)
 const NAV_TIMEOUT_MS = 4000; // slow network on the app page: fall back to the cached copy
 
 // Relative to this file, so the app works under the /sembilan/ sub-path.
@@ -17,6 +20,31 @@ const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './
 // Nice to have offline; a failure here never blocks the install.
 const EXTRA = ['./icon-512.png', './icon-maskable-512.png', './panduan.html', './data/tolls.json', './data/plus-fares.json'];
 const INDEX_URL = new URL('./index.html', self.location.href).href;
+// Small files every rider needs offline; fetched after install, never blocking it.
+const DATA_FIRST = ['./data/landmarks.json', './data/cameras.json', './data/index.json'];
+// Same-origin data: 'fresh' = network first with a 4 s fallback to the saved copy; 'fast' = saved copy at once, refreshed in the background.
+function classifyData(pathname) {
+  if (/\/data\/(index\.json|tolls\.json|plus-fares\.json|cameras\.json)$/.test(pathname)) return 'fresh';
+  if (/\/data\/(landmarks\.json|places\/[a-z0-9]+\.json|t\/[\d_-]+\.json|cat\/[a-z0-9_\/-]+\.json)$/.test(pathname)) return 'fast';
+  return null;
+}
+async function precacheData() {
+  const cache = await caches.open(DATA_CACHE);
+  const abs = (p) => new URL(p, self.location.href).href;
+  const grab = async (p) => { const u = abs(p); try { const r = await fetchOk(u, 1); await cache.put(u, r.clone()); return r; } catch (err) { return null; } };
+  const [, , idx] = await Promise.all(DATA_FIRST.map(grab));
+  try {
+    const tiles = Object.keys(((idx && await idx.json()) || {}).tiles || {}).filter((k) => /^[\d_-]+$/.test(k));
+    for (let i = 0; i < tiles.length; i += 6) await Promise.all(tiles.slice(i, i + 6).map((k) => grab(`./data/t/${k}.json`)));
+  } catch (err) { /* offline or a bad index: the tiles are cached on first use instead */ }
+}
+async function staleWhileRevalidate(req, cacheName) {
+  const cache = await caches.open(cacheName);
+  const hit = await cache.match(req.url, { ignoreSearch: true });
+  const net = fetch(req, { cache: 'no-cache' }).then((r) => { if (r.ok) cache.put(req.url, r.clone()).catch(() => {}); return r; });
+  if (hit) { net.catch(() => {}); return hit; }
+  return net;
+}
 
 const LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
 const LEAFLET_JS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
@@ -78,6 +106,7 @@ self.addEventListener('activate', (event) => {
       if (key.startsWith(PREFIX) && !keep.has(key)) await caches.delete(key);
     }
     await self.clients.claim();
+    await precacheData().catch(() => {}); // about 1 MB, after the app is already usable
   })());
 });
 
@@ -94,10 +123,9 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(networkFirst(req, SHELL_CACHE, INDEX_URL, NAV_TIMEOUT_MS));
       return;
     }
-    if (/\/data\/(index\.json|tolls\.json|plus-fares\.json|cameras\.json|places\/[a-z0-9]+\.json|t\/[\d_-]+\.json)$/.test(url.pathname)) {
-      event.respondWith(networkFirst(req, DATA_CACHE));
-      return;
-    }
+    const dk = classifyData(url.pathname);
+    if (dk === 'fresh') { event.respondWith(networkFirst(req, DATA_CACHE, undefined, NAV_TIMEOUT_MS)); return; }
+    if (dk === 'fast') { event.respondWith(staleWhileRevalidate(req, DATA_CACHE)); return; }
     if (/\/icon[^/]*\.(png|svg)$/.test(url.pathname)) {
       event.respondWith(cacheFirst(req, SHELL_CACHE));
       return;
@@ -198,5 +226,5 @@ async function trimCache(name, max) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { classifyCross, lruVictims, trimCache, tileCacheFirst, networkFirst, MAX_TILES, SHELL_CACHE, TILE_CACHE, META_CACHE };
+  module.exports = { classifyData, staleWhileRevalidate, precacheData, DATA_CACHE, classifyCross, lruVictims, trimCache, tileCacheFirst, networkFirst, MAX_TILES, SHELL_CACHE, TILE_CACHE, META_CACHE };
 }
