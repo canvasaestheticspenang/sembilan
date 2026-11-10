@@ -19,6 +19,7 @@ body.dark{--bg:#0b1220;--fg:#e2e8f0;--mut:#94a3b8;--line:#1e293b;--card:#111a2e;
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;overflow:hidden;font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg)}
 #map{position:fixed;inset:0;z-index:0}
+body.tv::before{content:'';position:fixed;left:0;right:0;top:0;height:calc(170px + env(safe-area-inset-top));z-index:1;pointer-events:none;background:linear-gradient(#e5e7eb 50%,rgba(229,231,235,0))}body.dark.tv::before{background:linear-gradient(#1f2937 50%,rgba(31,41,55,0))}
 #hdTap{position:fixed;inset:0;z-index:5;display:none}body.hv #hdTap{display:block}body.hv{background:#e5e7eb}body.dark.hv{background:#1f2937}body.hv #map{pointer-events:none;will-change:transform}body.vtr #map{transition:transform .7s cubic-bezier(.4,0,.2,1)}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
 input{font:inherit;color:var(--fg)}
@@ -609,17 +610,30 @@ function openLook(){const sw=Object.keys(ROUTE_COLORS),avs=[['arrow','avArrow'],
 const meS={lat:null,lon:null,hd:0,moving:false,raf:0,from:null,to:null,t0:0,dur:1000,lastP:null,lastT:0,el:null};
 function meRot(){if(!meS.el)return;const hd=meS.hd||0;meS.el.nav.style.transform=`rotate(${hd}deg)`;const up=viewOn?`rotate(${hd}deg)`:'';meS.el.av.style.transform=up;meS.el.dot.style.transform=up}/* inside the turned map: counter-rotate so the arrow points up the screen and photos stay upright */
 const angD=(a,b)=>((b-a+540)%360)-180;
-function meFrame(now){const k=Math.min(1,(now-meS.t0)/meS.dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+function meFrame(now){const k=Math.min(1,(now-meS.t0)/meS.dur),e=meS.lin?k:k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2; // steady speed moves evenly; easing is for starts and stops
+ 
   meS.lat=meS.from[0]+(meS.to[0]-meS.from[0])*e;meS.lon=meS.from[1]+(meS.to[1]-meS.from[1])*e;meS.hd=(meS.hd0+angD(meS.hd0,meS.hdT)*e+360)%360;
   meMarker.setLatLng([meS.lat,meS.lon]);accCircle.setLatLng([meS.lat,meS.lon]);
   rotateMap(meS.hd);if(meS.el)meRot();
   if(st.nav&&st.follow)followTo(meS.lat,meS.lon,map.getZoom(),false);
   meS.raf=k<1?requestAnimationFrame(meFrame):0}
+// Point `m` metres along the route: [lat, lon, bearing of that stretch]. Pure.
+function routePoint(r,m){const c=r&&r.coords,cu=r&&r.cum;if(!c||!cu||c.length<2)return null;m=Math.max(0,Math.min(m,cu[cu.length-1]));
+  let lo=0,hi=cu.length-1;while(hi-lo>1){const md=(lo+hi)>>1;if(cu[md]<=m)lo=md;else hi=md}
+  while(lo<cu.length-2&&cu[lo+1]<=cu[lo])lo++;const sp=cu[lo+1]-cu[lo],t=sp>0?(m-cu[lo])/sp:0;
+  return[c[lo][0]+t*(c[lo+1][0]-c[lo][0]),c[lo][1]+t*(c[lo+1][1]-c[lo][1]),bearing(c[lo][0],c[lo][1],c[lo+1][0],c[lo+1][1])]}
 function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.nav.bear!=null)hd=st.nav.bear;
   const lp=meS.lastP,mv=lp?hav(lp[0],lp[1],h.lat,h.lon):0;
   if((hd==null||isNaN(hd))&&lp&&mv>6)hd=bearing(lp[0],lp[1],h.lat,h.lon);
   if(!lp||mv>6)meS.lastP=[h.lat,h.lon];
-  let la=h.lat,lo=h.lon;const n=st.nav;if(n&&n.snap){la=n.snap[0];lo=n.snap[1]}
+  const gap=meS.lastT?Date.now()-meS.lastT:1000;meS.lastT=Date.now();const dur=Math.max(400,Math.min(1500,gap));
+  let la=h.lat,lo=h.lon,lead=false;const n=st.nav,v=(h.speed!=null&&h.speed>=0)?h.speed:null;if(n&&n.snap){la=n.snap[0];lo=n.snap[1];
+    /* A fix is already old when it arrives and the marker needs `dur` to glide to it, so a marker aimed at the fix always trails the rider
+       (about 25 m at 70 km/h). While moving on the route, aim at where the rider will be when the glide ends: along the route, at the GPS speed. */
+    if(v>2&&(h.acc||99)<=40&&n.along!=null){const age=Math.max(0,Math.min(1,(Date.now()-(h.t||Date.now()))/1000));
+      const q=routePoint(n.r,n.along+Math.min(v,45)*(dur/1000+age));if(q){la=q[0];lo=q[1];hd=q[2];lead=true}}}
+  // standing still: GPS wanders a few metres; average it out instead of letting the marker walk around
+  if(!lead&&v!=null&&v<.7&&meS.to&&hav(meS.to[0],meS.to[1],la,lo)<Math.max(12,h.acc*1.2)){la=meS.to[0]+(la-meS.to[0])*.15;lo=meS.to[1]+(lo-meS.to[1])*.15}
   const moving=(hd!=null&&!isNaN(hd))&&(!!n||(h.speed||0)>1.2);
   if(!meMarker){const html=meHTML();
     meMarker=L.marker([la,lo],{icon:L.divIcon({className:'me-wrap',html,iconSize:[44,44],iconAnchor:[22,22]}),zIndexOffset:1000,interactive:false}).addTo(map);
@@ -628,8 +642,7 @@ function drawMe(){const h=st.here;if(!h)return;let hd=h.heading;if(st.nav&&st.na
   meS.moving=moving;meVis();
   accCircle.setRadius(h.acc);
   if(meS.raf)cancelAnimationFrame(meS.raf);
-  const gap=meS.lastT?Date.now()-meS.lastT:1000;meS.lastT=Date.now();
-  meS.from=[meS.lat,meS.lon];meS.to=[la,lo];meS.hd0=meS.hd;meS.hdT=(hd==null||isNaN(hd))?meS.hd:hd;meS.t0=performance.now();meS.dur=Math.max(400,Math.min(1500,gap));
+  meS.from=[meS.lat,meS.lon];meS.to=[la,lo];meS.lin=lead;meS.hd0=meS.hd;meS.hdT=(hd==null||isNaN(hd))?meS.hd:hd;meS.t0=performance.now();meS.dur=dur;
   meS.raf=requestAnimationFrame(meFrame)}
 
 /* ---------- search ---------- */
@@ -2868,15 +2881,19 @@ const isLand=()=>innerWidth>innerHeight&&innerHeight<=520;
 function anchorOffX(){if(!isLand())return 0;const W=innerWidth,r=Math.max($('#navTop').getBoundingClientRect().right,$('#navBot').getBoundingClientRect().right);return Math.round(Math.max(0,Math.min(W*.4,(r+8)/2)))}
 function anchorOff(){if(isLand())return 0;const H=innerHeight,tb=Math.max(0,$('#navTop').getBoundingClientRect().bottom),bt=Math.min(H,$('#navBot').getBoundingClientRect().top);return Math.round(Math.max(-H*.3,Math.min(H*.3,(tb+bt)/2-H/2)))}
 /* Heading-up / 3D view: the Leaflet map is oversized and CSS-rotated around the position dot, so the road ahead is always "up". */
-const VK={h:.5,t:.6};
-function setOrigin(){if(!viewOn)return;const m=$('#map'),k=VK[viewOn],W=innerWidth,H=innerHeight;m.style.transformOrigin=`${W*k+W/2+_offX}px ${H*k+H/2+_off}px`}
+/* The box is a square centred on the screen whose half-side reaches the farthest screen corner from the rider, so no heading leaves an uncovered edge.
+   3D needs more ground ahead; it gets a larger square and a soft horizon (body.tv::before) where the ground runs out. */
+let _vR=0;
+function viewR(v){const W=innerWidth,H=innerHeight,d=Math.hypot(W/2+Math.abs(st.nav?anchorOffX():0),H/2+Math.abs(st.nav?anchorOff():0))+16;return Math.ceil(v==='t'?Math.max(d,H*.83,W*.6):d)}
+function viewBox(v){_vR=viewR(v);$('#map').style.inset=`${Math.round(innerHeight/2-_vR)}px ${Math.round(innerWidth/2-_vR)}px`}
+function setOrigin(){if(!viewOn)return;$('#map').style.transformOrigin=`${_vR+_offX}px ${_vR+_off}px`}
 let _vtT=0;
 function viewTf(hd,v){return `perspective(900px) rotateX(${v==='t'?48:0}deg) rotate(${-hd}deg)`}
 function applyView(){const want=(st.nav&&st.follow&&S.view!=='n')?S.view:'';const m=$('#map');
   if(want!==viewOn){const was=viewOn,hd=(meS&&meS.hd)||0;viewOn=want;
     document.body.classList.add('vtr');clearTimeout(_vtT);
     document.body.classList.toggle('hv',!!want);document.body.classList.toggle('tv',want==='t');
-    if(want){const k=VK[want]*100;m.style.inset=`-${k}%`;
+    if(want){viewBox(want);
       if(!was){m.style.transition='none';m.style.transform=viewTf(0,'');void m.offsetWidth;m.style.transition=''}
       map.invalidateSize({pan:false});_offT=0;if(st.here)followTo(st.here.lat,st.here.lon,map.getZoom(),false);setOrigin();m.style.transform=viewTf(hd,want)}
     else{m.style.transform=viewTf(0,'');
@@ -2939,14 +2956,14 @@ $('#btnShare').onclick=async()=>{const n=st.nav;if(!n)return;const txt=T('shareT
   try{await navigator.clipboard.writeText(txt);toast(T('copied'))}catch(e){toast(txt)}};
 async function reroute(){const n=st.nav;if(!n||!st.here||n.reBusy)return;n.reBusy=true;n.lastRe=Date.now();logEv('reroute',{n:n.reFail||0});if(!n.reFail)say(T('reroute'));
   try{const [r]=await fetchRoutes({lat:st.here.lat,lon:st.here.lon},st.dest,false);if(st.nav!==n||!n.off)return; // nav ended, or the rider is back on the old route
-    const old=n.r;n.r=r;n.last=0;n.off=0;n.spoken={};n.snap=null;n.line.setLatLngs(r.coords);routeLayer.eachLayer(l=>{if(l!==n.line&&l!==n.done)l.setLatLngs(r.coords)});if(n.done)n.done.setLatLngs([]);
+    const old=n.r;n.r=r;n.last=0;n.off=0;n.spoken={};n.snap=null;n.along=null;n.line.setLatLngs(r.coords);routeLayer.eachLayer(l=>{if(l!==n.line&&l!==n.done)l.setLatLngs(r.coords)});if(n.done)n.done.setLatLngs([]);
     // reuse POIs from previous route where they still lie on the new one
     if(Array.isArray(old.pois)){r.pois=old.pois.map(p=>{const q=nearestOnRoute(r,p.lat,p.lon);return q.d<({fuel:250,rr:550,cam:45,toll:70,shelter:80})[p.type]?{...p,along:q.along}:null}).filter(Boolean)}
     st.routes=[r];st.sel=0;n.reFail=0;n.reOff=0;relShow('');relSaveRoute();if(S.rider)loadRain(r);navTick()}catch(e){logEv('routeFail',{m:errMsg(e)});relRerouteFail(n)}finally{n.reBusy=false}}
 function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProgress(n);
   let near=nearestOnRoute(r,h.lat,h.lon,n.last-5,n.last+600);if(near.d>150)near=nearestOnRoute(r,h.lat,h.lon);
   const tol=Math.max(45,Math.min(h.acc*1.3,120));
-  if(near.d>tol){if(relOffRoute(n,h,near)){reroute();return}}else{n.off=0;relOnRoute(n);n.last=near.i;const c0=r.coords[near.i],c1=r.coords[Math.min(near.i+1,r.coords.length-1)];n.snap=[c0[0]+near.t*(c1[0]-c0[0]),c0[1]+near.t*(c1[1]-c0[1])];if(n.done)n.done.setLatLngs(r.coords.slice(0,near.i+1).concat([n.snap]))}
+  if(near.d>tol){const go=relOffRoute(n,h,near);if(n.off>=2){n.snap=null;n.along=null}if(go){reroute();return}}else{n.along=near.along;n.off=0;relOnRoute(n);n.last=near.i;const c0=r.coords[near.i],c1=r.coords[Math.min(near.i+1,r.coords.length-1)];n.snap=[c0[0]+near.t*(c1[0]-c0[0]),c0[1]+near.t*(c1[1]-c0[1])];if(n.done)n.done.setLatLngs(r.coords.slice(0,near.i+1).concat([n.snap]))}
   const along=near.along;const c=r.coords,i=Math.min(near.i,c.length-2);n.bear=bearing(c[i][0],c[i][1],c[i+1][0],c[i+1][1]);
   const k=r.steps.findIndex(s=>s.along>along+5&&s.maneuver.type!=='depart'&&!trivial(s));const si=k<0?r.steps.length-1:k;const s=r.steps[si];
   const dist=Math.max(0,s.along-along);const remD=Math.max(0,r.total-along);
@@ -2978,7 +2995,7 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProg
         ra.innerHTML=`${T('lvl'+lvl(v))} · ${fmtDist(p.along-along)}${sh?`<br><small>${T('shelter')}: ${esc(sh.name)} · ${fmtDist(sh.along-along)}</small>`:''}`;ra.classList.remove('hidden');rainShown=true;
         const rk='r'+Math.round(p.along);if(!n.rainSaid[rk]){n.rainSaid[rk]=1;logEv('rain',{lvl:lvl(v),m:fmtDist(p.along-along)});say(`${T('lvl'+lvl(v))} ${T('aheadW')}, ${fmtDist(p.along-along)}${sh?'. '+T('shelter')+', '+sh.name+', '+fmtDist(sh.along-along):''}`)}break}}}
   if(!rainShown)ra.classList.add('hidden');
-  if(st.follow&&!n.zset){n.zset=1;if(map.getZoom()<13)setZ(fast?15:17)}}
+  if(st.follow&&!n.zset){if(map.getZoom()<13&&!map._animatingZoom)setZ(fast?15:17);else if(map.getZoom()>=13)n.zset=1}}
 map.on('dragstart',()=>{if(st.nav){st.follow=false;applyView()}});
 function openWA(text){const num=(S.family||'').replace(/\D/g,'');const a=document.createElement('a');a.href=`https://wa.me/${num}?text=${encodeURIComponent(text)}`;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
 $('#btnFam').onclick=()=>{const n=st.nav;if(!n)return;openWA(T('startMsg')(st.dest.name,fmtClock(new Date(Date.now()+n.remT*1000))))};
@@ -3166,7 +3183,7 @@ window.addEventListener('resize',positionFabs);
 /* Orientation change: the layout swaps in one frame (panels move, map re-centres). Fade everything out, re-layout while hidden, fade back in. */
 (()=>{let t=0,end=0,land=isLand(),w=innerWidth;
   try{L.DomEvent.off(window,'resize',map._onResize,map)}catch(e){}
-  const settle=()=>{map.invalidateSize({pan:false});_offT=0;
+  const settle=()=>{if(viewOn)viewBox(viewOn);map.invalidateSize({pan:false});_offT=0;
     if(st.nav&&st.follow&&st.here)followTo(st.here.lat,st.here.lon,map.getZoom(),false);else if(viewOn)applyView();
     setOrigin();positionFabs()};
   window.addEventListener('resize',()=>{const l=isLand(),dw=Math.abs(innerWidth-w);
