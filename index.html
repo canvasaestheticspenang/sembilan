@@ -2825,7 +2825,7 @@ function renderSheet(loading){
       chips=`<div class="chips">${r.noMoto&&r.noMoto.length?`<span class="chip bad">⚠ ${T('noMoto')}: ${esc(r.noMoto.slice(0,2).join(', '))}</span>`:''}<span class="chip"><i style="background:${POI_COL.shelter}"></i>${T('shelterN')(sh)}</span>${c('cam')?`<span class="chip"><i style="background:${POI_COL.cam}"></i>${T('camsN')(c('cam'))}</span>`:''}</div>`}
     else if(Array.isArray(r.pois)){const c=t=>r.pois.filter(p=>p.type===t).length;const n={toll:c('toll'),cam:c('cam'),fuel:c('fuel'),rr:c('rr')};
       chips=`<div class="chips">${n.toll?`<span class="chip"><i style="background:${POI_COL.toll}"></i>${T('tollsN')(n.toll)}</span>`:''}${n.cam?`<span class="chip"><i style="background:${POI_COL.cam}"></i>${T('camsN')(n.cam)}</span>`:''}<span class="chip"><i style="background:${POI_COL.fuel}"></i>${T('fuelN')(n.fuel)}</span>${n.rr?`<span class="chip"><i style="background:${POI_COL.rr}"></i>${T('rrN')(n.rr)}</span>`:''}</div>`}
-    h+=`<button class="rc ${sel?'sel':''}" data-r="${i}"><div class="l1"><span class="dur" style="${sel?'color:var(--ac)':''}">${fmtDur(r.duration)}</span><span class="km">${fmtDist(r.distance)}</span><span class="eta">${T('arr')} ${fmtClock(new Date(now+r.duration*1000))}</span></div><div class="via">${i===fi?T('fastest')+' · ':''}${esc(r.via||'')}${tollTxt(r)}</div><div class="via" style="font-size:11px">${r.tt?(r.tt.delay>=120?`<b style="color:#b45309">${T('delayN')(Math.round(r.tt.delay/60))}</b> · `:'')+T('liveTraffic'):T('noTraffic')}</div>${chips}</button>`});
+    h+=`<button class="rc ${sel?'sel':''}" data-r="${i}"><div class="l1"><span class="dur" style="${sel?'color:var(--ac)':''}">${fmtDur(PACE.dur(r))}</span><span class="km">${fmtDist(r.distance)}</span><span class="eta">${T('arr')} ${fmtClock(new Date(now+PACE.dur(r)*1000))}</span></div><div class="via">${i===fi?T('fastest')+' · ':''}${esc(r.via||'')}${tollTxt(r)}</div><div class="via" style="font-size:11px">${r.tt?(r.tt.delay>=120?`<b style="color:#b45309">${T('delayN')(Math.round(r.tt.delay/60))}</b> · `:'')+T('liveTraffic'):T('noTraffic')}${Math.abs(PACE.f(r)-1)>=.03?' · '+PACE.t('adj'):''}</div>${chips}</button>`});
   h+=`<div class="row" style="margin-top:4px"><button class="btn p" id="btnStart"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2l8 19-8-4-8 4z"/></svg>${T('start')}</button><button class="btn s" id="btnSteps">${T('steps')}</button></div>`;
   const r=st.routes[st.sel];
   if(!S.rider&&tollD&&st.routes.some(x=>x.toll))h+=`<div class="muted" style="font-size:11px;margin-top:4px">${T('tollNote')}</div>`;
@@ -2919,7 +2919,7 @@ guardPush();
 /* ===== /BACK GUARD ===== */
 async function startNav(){startWatch();
   if(!st.origin||!st.origin.gps){toast(T('startGps'));st.origin=null;qO.value='';if(!st.here){toast(T('needOrigin'));return}st.origin={lat:st.here.lat,lon:st.here.lon,name:T('myLoc'),gps:true};await computeRoutes();if(!st.routes.length)return}
-  const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null,sc:{r:null,cams:[],said:{}}};SC.start();RIDE.start(st.dest&&st.dest.name);logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
+  const r=st.routes[st.sel];st.nav={r,last:0,spoken:{},off:0,lastRe:0,camSaid:{},rainSaid:{},arrived:false,bear:null,sc:{r:null,cams:[],said:{}}};SC.start();RIDE.start(st.dest&&st.dest.name);PACE.start(st.nav);logEv('start',{d:(st.dest&&st.dest.name)||'-',km:(r.distance/1000).toFixed(1),min:Math.round(r.duration/60),via:r.via||'-'});if(S.rider&&!(r.rain&&r.rain.pts))loadRain(r);
   routeLayer.clearLayers();st.nav.line=addRouteLines(r.coords);st.nav.done=L.polyline([],{color:'#94a3b8',weight:7,opacity:.95,lineCap:'round',lineJoin:'round'}).addTo(routeLayer);
   document.body.classList.add('navigating');st.follow=true;applyView();keepAwake();drawPois();$('#btnMute').innerHTML=icoVol(S.voice);$('#btnEnd').textContent=T('end');
   st.follow=true;if(st.here)followTo(st.here.lat,st.here.lon,17,false);
@@ -2927,7 +2927,7 @@ async function startNav(){startWatch();
   relSaveRoute();navTick();positionFabs();tipCard()}
 function tipCard(){const tk='tipsSeen'+(S.rider?'Moto':'Car');if(store.get(tk,false))return;store.set(tk,true);const ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   modal(`<h3>${T('tipT')}</h3><ul style="margin:0 0 12px;padding-left:20px;line-height:1.5"><li>${T('tipScreen')}</li>${ios?`<li>${T('tipIos')}</li>`:''}${S.rider?`<li>${T('tipRider')}</li>`:''}</ul><div style="text-align:right"><button class="btn p" data-close>${T('tipOk')}</button></div>`)}
-function endNav(){const ride=RIDE.end();$('#toast').classList.remove('show');relClear();relShow('');if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
+function endNav(){const ride=RIDE.end();PACE.end(st.nav);$('#toast').classList.remove('show');relClear();relShow('');if(st.nav)logEv('end',{left:Math.round((st.nav.remT||0)/60)+' min'});logFlush();st.nav=null;applyView();document.body.classList.remove('navigating');try{wake&&wake.release()}catch(e){}wake=null;native.stopSpeech();drawRoutes();drawPois();renderSheet();
   if(st.routes.length){const b=L.latLngBounds(st.routes[st.sel].coords);map.fitBounds(b,{paddingTopLeft:[30,130],paddingBottomRight:[30,Math.min(innerHeight*.5,380)]})}
   if(ride)RIDE.card(ride)}
 $('#btnEnd').onclick=endNav;
@@ -2968,11 +2968,11 @@ function navTick(){const n=st.nav,h=st.here;if(!n||!h)return;const r=n.r;relProg
   const k=r.steps.findIndex(s=>s.along>along+5&&s.maneuver.type!=='depart'&&!trivial(s));const si=k<0?r.steps.length-1:k;const s=r.steps[si];
   const dist=Math.max(0,s.along-along);const remD=Math.max(0,r.total-along);
   if(S.tomtom&&Date.now()-(n.ttAt||0)>300000&&!n.ttBusy){n.ttAt=Date.now();refreshNavEta()}
-  const remT=r.duration*(remD/(r.total||1));n.remT=remT;
+  const remT=PACE.dur(r)*(remD/(r.total||1));n.remT=remT;
   $('#nIco').innerHTML=arrow(s,52,'#fff');$('#nDist').textContent=fmtDist(dist);$('#nText').textContent=(s.maneuver.type==='arrive'&&remD>80)?instr({...s,maneuver:{type:'continue',modifier:'straight'}}):instr(s);
   const nx=r.steps.slice(si+1).find(x=>!trivial(x));const th=$('#then');if(nx&&nx.along-s.along<400&&s.maneuver.type!=='arrive'){th.innerHTML=`${T('then')} ${arrow(nx,18,'#fff')}`;th.classList.remove('hidden')}else th.classList.add('hidden');
   $('#nEta').textContent=fmtClock(new Date(Date.now()+remT*1000));$('#nRem').textContent=`${fmtDur(remT)} · ${fmtDist(remD)}`;
-  const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);SC.tick(n,r,along,v);RIDE.navTick(n,r,along,remD);
+  const v=(h.speed!=null&&h.speed>=0)?h.speed:0;$('#spd').textContent=Math.round(v*3.6);SC.tick(n,r,along,v);RIDE.navTick(n,r,along,remD);if(near.d<=tol)PACE.tick(n,r,along,(h.speed!=null&&h.speed>=0)?h.speed:null);
   // voice prompts
   const fast=v>16;const far=fast?1500:400,mid=fast?500:150,now=Math.max(35,v*3.5);const txt=instr(s);const key=si+':';
   if(s.maneuver.type==='arrive'){if(remD<35&&!n.arrived){n.arrived=true;logEv('arrive',{});say(T('arrive'));const d=st.dest;setTimeout(()=>{if(st.nav){endNav();if(S.rider&&S.family)arrivalModal(d)}},4000)}}
@@ -3041,10 +3041,10 @@ ta:{title:'பயணச் சுருக்கம்',dist:'தூரம்',t
     const cell=(v,l)=>`<div style="flex:1;text-align:center"><div style="font-size:22px;font-weight:800;line-height:1.2">${v}</div><div class="muted" style="font-size:12px">${l}</div></div>`;
     return `<div id="rideSum"><div style="display:flex;gap:8px;margin:10px 0">${cell(this.kmTxt(t.km)+' km',this.t('dist'))}${cell(fmtDur(t.mov),this.t('time'))}${cell(avg+' '+u,this.t('avg'))}</div>`+
       `<div class="muted" style="font-size:12px">${this.t('total',this.kmTxt(this.total.km),this.total.n)}</div>`+
-      (fl!=null?`<div class="tog" style="margin-top:8px"><span id="rideFuel">${this.t('fuelLeft',fl)}</span><button class="btn s" id="rideFill">${this.t('filled')}</button></div>`:'')+`</div>`},
+      (fl!=null?`<div class="tog" style="margin-top:8px;padding-left:0;padding-right:0"><span id="rideFuel">${this.t('fuelLeft',fl)}</span><button class="btn s" id="rideFill">${this.t('filled')}</button></div>`:'')+`</div>`},
   bind(t){const f=$('#rideFill');if(f)f.onclick=()=>{this.fill();$('#rideFuel').textContent=this.t('fuelLeft',this.left())};
     const sh=$('#rideShare');if(sh)sh.onclick=()=>{const x=this.t('shareTxt',this.kmTxt(t.km),fmtDur(t.mov));if(navigator.share)navigator.share({text:x}).catch(()=>{});else if(navigator.clipboard)navigator.clipboard.writeText(x).then(()=>toast(T('copied'))).catch(()=>{})}},
-  card(t){modal(`<h3>${this.t('title')}</h3>${t.dest?`<p class="muted" style="margin:0">${esc(t.dest)}</p>`:''}${this.html(t)}<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="btn s" id="rideShare">${this.t('share')}</button><button class="btn p" data-close>${T('close')}</button></div>`);this.bind(t)},
+  card(t){modal(`<h3>${this.t('title')}</h3>${t.dest?`<p class="muted" style="margin:0">${esc(t.dest)}</p>`:''}${this.html(t)}<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end"><button class="btn s" id="rideShare" style="flex:1">${this.t('share')}</button><button class="btn p" data-close>${T('close')}</button></div>`);this.bind(t)},
   // while navigating: warn once when fuel is low or will not last the trip, and again when nearly empty
   navTick(n,r,along,remD){const left=this.left();if(left==null)return;const need=Math.round(remD/1000);
     const low=left<=Math.max(15,this.fuel.range*.15),short=left<need+5,lvl=left<=5?2:(low||short)?1:0;if(lvl<=(n.fuelSaid||0))return;n.fuelSaid=lvl;
@@ -3080,6 +3080,42 @@ ta:{t:'என் தேடல்களைப் பதிவு செய்',no
     $('#mSlogClear').onclick=()=>{this.clear();$('#mSlogSend').textContent=this.t('send',0);toast(this.t('cleared'))};
     $('#mSlogSend').onclick=()=>{this.flush();if(!this.rows.length){toast(this.t('none'));return}const x=this.text();
       if(navigator.share)navigator.share({text:x}).catch(()=>{});else if(navigator.clipboard)navigator.clipboard.writeText(x).then(()=>toast(T('copied'))).catch(()=>{});else window.open(waUrl(x),'_blank','noopener')}}
+};
+/* ---------- ETA that learns from this rider (on this device only) ----------
+   While navigating, compare the time the route predicted for the distance covered with the time it really took.
+   The ratio is kept per kind of trip (motorcycle/car, expressway or not, rush hour or not, live traffic or not)
+   and applied to later ETAs of the same kind. Stops longer than 2 minutes (petrol, a break) are not counted.
+   Stores 16 numbers at most: no positions, no routes, no times of day. */
+const PACE={MIN_KM:2,FULL_KM:40,LO:.6,HI:1.6,STOP:120,L:{
+ms:{t:'ETA belajar daripada tunggangan saya',note:'Sembilan membandingkan anggaran masa dengan masa sebenar anda dan membetulkan ETA akan datang. Disimpan pada peranti ini sahaja.',none:'Belum cukup data',fast:(p,n)=>`Anda ${p}% lebih pantas daripada anggaran (${n} perjalanan)`,slow:(p,n)=>`Anda ${p}% lebih perlahan daripada anggaran (${n} perjalanan)`,same:n=>`Sepadan dengan anggaran (${n} perjalanan)`,reset:'Set semula',done:'Data ETA dipadam',adj:'dilaras mengikut tunggangan anda'},
+en:{t:'ETA learns from my rides',note:'Sembilan compares its time estimate with your real time and corrects later ETAs. Stored on this device only.',none:'Not enough data yet',fast:(p,n)=>`You are ${p}% faster than estimated (${n} rides)`,slow:(p,n)=>`You are ${p}% slower than estimated (${n} rides)`,same:n=>`Matches the estimate (${n} rides)`,reset:'Reset',done:'ETA data cleared',adj:'adjusted to your riding'},
+zh:{t:'根据我的骑行学习预计到达时间',note:'Sembilan 会把预计时间与您的实际用时比较，并修正之后的预计到达时间。仅保存在此设备上。',none:'数据尚不足',fast:(p,n)=>`您比预计快 ${p}%（${n} 次行程）`,slow:(p,n)=>`您比预计慢 ${p}%（${n} 次行程）`,same:n=>`与预计相符（${n} 次行程）`,reset:'重置',done:'预计到达时间数据已清除',adj:'已按您的骑行调整'},
+ta:{t:'என் பயணங்களிலிருந்து ETA கற்றுக்கொள்ளும்',note:'Sembilan தன் நேர மதிப்பீட்டை உங்கள் உண்மையான நேரத்துடன் ஒப்பிட்டு, பின்வரும் ETA-க்களைத் திருத்தும். இந்தச் சாதனத்தில் மட்டுமே சேமிக்கப்படும்.',none:'இன்னும் போதிய தரவு இல்லை',fast:(p,n)=>`மதிப்பீட்டை விட ${p}% வேகமாகச் செல்கிறீர்கள் (${n} பயணங்கள்)`,slow:(p,n)=>`மதிப்பீட்டை விட ${p}% மெதுவாகச் செல்கிறீர்கள் (${n} பயணங்கள்)`,same:n=>`மதிப்பீட்டுடன் பொருந்துகிறது (${n} பயணங்கள்)`,reset:'மீட்டமை',done:'ETA தரவு அழிக்கப்பட்டது',adj:'உங்கள் ஓட்டத்திற்கு ஏற்ப சரிசெய்யப்பட்டது'}},
+  t(k,...a){const d=this.L[S.lang]||this.L.en;const v=d[k]!==undefined?d[k]:this.L.en[k];return typeof v==='function'?v(...a):v},
+  on:store.get('paceOn',true),b:store.get('pace',{}),
+  // rush hour: weekdays 6:30-9:30 and 16:30-20:00 local time
+  peak(d){const w=d.getDay(),h=d.getHours()+d.getMinutes()/60;return w>=1&&w<=5&&((h>=6.5&&h<9.5)||(h>=16.5&&h<20))},
+  key(r,d){return(S.rider?'m':'c')+(r&&r.hwy?'h':'s')+(this.peak(d||new Date())?'p':'o')+(r&&r.tt?'t':'n')},
+  // correction factor for a route: 1 until there is data, then eased in as kilometres accumulate
+  f(r,d){if(!this.on)return 1;const e=this.b[this.key(r,d)];if(!e||!(e.km>=this.MIN_KM))return 1;return 1+(Math.max(this.LO,Math.min(this.HI,e.k))-1)*Math.min(1,e.km/this.FULL_KM)},
+  dur(r,d){return r.duration*this.f(r,d)},
+  start(n){n.pace={r:null,along:0,t:0,pred:0,act:0,still:0,key:null}},
+  // one navigation tick: add the predicted and the real time for the stretch covered since the last tick
+  tick(n,r,along,v,now=Date.now()){const p=n.pace;if(!p)return;
+    if(p.r===r&&p.t){const dt=(now-p.t)/1000,dA=along-p.along;
+      if(dt>0&&dt<30&&dA>=0&&dA<dt*70){p.still=(v!=null&&v<.7)?p.still+dt:0;
+        if(p.still<=this.STOP){p.act+=dt;p.pred+=r.duration*(dA/(r.total||1));p.km=(p.km||0)+dA/1000}}}
+    else p.key=p.key||this.key(r,new Date(now));
+    p.r=r;p.along=along;p.t=now},
+  // trip over: fold it into its bucket, weighted by distance, recent trips counting a little more
+  end(n){const p=n&&n.pace;if(!p||!this.on||!(p.km>=this.MIN_KM)||!(p.pred>30)||!p.key)return null;const k=p.act/p.pred;if(!(k>.3&&k<3))return null;
+    const e=this.b[p.key]||{k:1,km:0,n:0},w=Math.min(e.km,this.FULL_KM*2);e.k=(e.k*w+k*p.km)/(w+p.km);e.km=Math.min(e.km+p.km,9999);e.n++;this.b[p.key]=e;store.set('pace',this.b);logEv('pace',{k:k.toFixed(2),km:p.km.toFixed(1)});return k},
+  sum(){let km=0,n=0,x=0;for(const e of Object.values(this.b)){km+=e.km;n+=e.n;x+=e.k*e.km}if(!(km>=this.MIN_KM))return this.t('none');
+    const pc=Math.round((x/km-1)*100);return pc<=-3?this.t('fast',-pc,n):pc>=3?this.t('slow',pc,n):this.t('same',n)},
+  clear(){this.b={};store.set('pace',{})},
+  row(){return `<div class="tog"><span>${this.t('t')}</span><button class="sw ${this.on?'on':''}" id="mPace"></button></div><div class="tog"><span class="muted" id="mPaceSum" style="margin:0">${this.sum()}</span><button class="btn s" id="mPaceReset">${this.t('reset')}</button></div><div class="muted">${this.t('note')}</div>`},
+  bind(){$('#mPace').onclick=e=>{this.on=!this.on;store.set('paceOn',this.on);e.target.classList.toggle('on',this.on)};
+    $('#mPaceReset').onclick=()=>{this.clear();$('#mPaceSum').textContent=this.sum();toast(this.t('done'))}}
 };
 const SC={FAR:400,NEAR:150,SNAP:25,all:null,loading:null,
   load(){if(!SC.loading)SC.loading=getJSON('data/cameras.json',{},15000).then(j=>{SC.all=j&&Array.isArray(j.c)?j:null;return SC.all}).catch(()=>{SC.loading=null;SC.all=null;return null});return SC.loading},
@@ -3157,6 +3193,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   <div class="tog"><span>${T('voice')}</span><button class="sw ${S.voice?'on':''}" id="mVoice"></button></div>
   ${SC.row()}
   ${RIDE.row()}
+  ${PACE.row()}
   <div class="tog"><span>${T('learnT')}</span><button class="btn s" id="mClearPicks">${T('learnB')}</button></div><div class="muted">${T('learnNote')}</div>
   ${SLOG.row()}
   <div class="tog"><span>${T('look')}</span><button class="btn s" id="mLook">${T('lookT')}</button></div>
@@ -3170,7 +3207,7 @@ $('#btnSettings').onclick=()=>{modal(`<h3>${T('settings')}</h3>
   $('#mRider').onclick=e=>{setRider(!S.rider);e.target.classList.toggle('on',S.rider)};
   $('#mFam').onchange=e=>{S.family=e.target.value.trim();save('family')};
   $('#mVoice').onclick=e=>{S.voice=!S.voice;save('voice');e.target.classList.toggle('on',S.voice)};
-  SC.bind();RIDE.bindRow();SLOG.bind();
+  SC.bind();RIDE.bindRow();SLOG.bind();PACE.bind();
   $('#mClearPicks').onclick=()=>{clearAllPicks(PICKS_STORE);toast(T('learnDone'))};
   $('#mLook').onclick=openLook;
   $('#mCred').onclick=openCredits;
