@@ -140,14 +140,14 @@ describe('speed camera alerts', () => {
     });
   });
 
-  it('service worker treats cameras.json like the other data files (network first)', () => {
-    const sw = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
-    const m = sw.match(/if \((\/\\\/data\\\/\([^\n]*?\)\$\/)\.test\(url\.pathname\)\)/);
-    assert.ok(m, 'data regexp found');
-    const re = eval(m[1]); // eslint-disable-line no-eval
-    assert.ok(re.test('/sembilan/data/cameras.json'));
-    assert.ok(re.test('/sembilan/data/tolls.json'));
-    assert.ok(!re.test('/sembilan/data/cameras.json.bak'));
+  it('service worker treats cameras.json like the other small data files (network first)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
+    const m = src.match(/function classifyData\(pathname\) \{[\s\S]*?\n\}/);
+    assert.ok(m, 'classifyData found');
+    const classifyData = eval('(' + m[0] + ')'); // eslint-disable-line no-eval
+    assert.equal(classifyData('/sembilan/data/cameras.json'), 'fresh');
+    assert.equal(classifyData('/sembilan/data/tolls.json'), 'fresh');
+    assert.equal(classifyData('/sembilan/data/cameras.json.bak'), null);
   });
 });
 
